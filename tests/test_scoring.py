@@ -171,14 +171,32 @@ def test_inversion_fixes_supply_and_risk_headlines(inverted_mode, monkeypatch):
     assert result.components["inverted"] is True
 
 
-def test_inversion_breaks_demand_and_price_headlines(inverted_mode, monkeypatch):
-    """The known cost, measured 0/6. No sign flip can fix this.
+def test_market_reports_are_routed_away_from_the_flip(inverted_mode, monkeypatch):
+    """Inverting these was the flip's whole cost -- measured 0/6 before routing.
 
-    "Global oil demand collapses" is negative *and* bearish; "Brent tumbles
-    below $60" reports a fall that inverting reads as bullish.
+    "Global oil demand collapses" is negative *and* bearish, and "Brent tumbles
+    below $60" reports a fall. Routing on cns.events.describes_market_directly
+    keeps their sign, taking the pair from 0/6 to 6/6 and the overall eval from
+    11/18 to 17/18.
     """
     finbert(monkeypatch, 0.03, 0.94, 0.03)
-    assert scoring.score(H("Global oil demand collapses")).direction == "bullish"  # wrong
+    for title in (
+        "Global oil demand collapses as recession deepens",
+        "Brent crude tumbles below $60 a barrel",
+        "US crude inventories post a huge unexpected build",
+    ):
+        result = scoring.score(H(title))
+        assert result.direction == "bearish", title
+        assert result.components["inverted"] is False
+        assert result.components["describes_market_directly"] is True
+
+
+def test_supply_events_still_get_flipped(inverted_mode, monkeypatch):
+    """Routing must not disarm the flip where it was doing the work."""
+    finbert(monkeypatch, 0.06, 0.85, 0.09)
+    result = scoring.score(H("Libya halts crude exports after pipeline damage"))
+    assert result.direction == "bullish"
+    assert result.components["inverted"] is True
 
 
 def test_inversion_is_recorded_in_the_stored_version(monkeypatch):

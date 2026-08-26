@@ -230,3 +230,70 @@ def classify(title: str) -> Event:
         hedged=hedged,
         matched=matched,
     )
+
+
+#: Words that mark a headline as reporting the oil market's own numbers rather
+#: than an event acting on them: a price level, a percentage move, a settlement.
+_PRICE_MARKER = _p(
+    r"prices?", r"futures", r"a barrel", r"per barrel", r"settle\w*", r"session",
+    r"benchmark", r"\$\d[\d.,]*", r"\d[\d.,]*%",
+)
+_PRICE_SUBJECT = _p(r"oil", r"crude", r"brent", r"wti", r"prices?", r"futures")
+
+#: Verbs for a price moving. Kept separate from the supply vocabulary: "eases"
+#: means a smaller price here but a *larger* supply in "eases sanctions", so
+#: mixing the two lists would corrupt event classification.
+_PRICE_MOVE = _p(
+    r"rall(?:y|ies|ied)", r"slid\w*", r"slides?", r"slip\w*", r"dip\w*",
+    r"tumbl\w+", r"plunge\w*", r"surg\w+", r"jump\w*", r"climb\w+",
+    r"falls?", r"fell", r"rise[sn]?", r"rose", r"drops?", r"dropped",
+    r"gains?", r"gained", r"lose[sn]?", r"lost", r"eas\w+", r"retreat\w*",
+    r"advance\w*", r"settle\w*", r"weaker", r"stronger", r"higher", r"lower",
+)
+
+#: Supply nouns that identify an event acting on the market. Excludes barrels,
+#: which in "below $60 a barrel" is a price unit, not a supply story.
+_SUPPLY_EVENT_NOUN = _p(
+    r"outputs?", r"productions?", r"quotas?", r"exports?", r"supply", r"supplies",
+    r"shipments?", r"cargo(?:es)?", r"loadings?", r"capacity",
+    r"refin\w+", r"pipelines?", r"wells?", r"rigs?",
+)
+
+
+def describes_market_directly(title: str) -> bool:
+    """Whether the headline reports oil's own numbers moving.
+
+    This is the routing question for sentiment inversion. Inverting FinBERT is
+    right when a headline describes something *happening to* supply -- an
+    outage, a sanction, a war -- because grim news is bullish for crude. It is
+    exactly wrong when the headline already reports the market's own direction,
+    where tone and price agree:
+
+        "Brent crude tumbles below $60 a barrel"   negative, and bearish
+        "Global oil demand collapses"              negative, and bearish
+        "US crude inventories post a huge build"   bearish
+
+    Measured over 18 unambiguous headlines, inverting scored 11/12 on the first
+    kind and 0/6 on the second. Routing on this distinction is worth more than
+    any change to the model.
+    """
+    text = (title or "").strip()
+    if not text:
+        return False
+
+    moved = bool(_INCREASE.search(text) or _DECREASE.search(text))
+
+    # Inventories and demand are the market's own quantities.
+    if moved and (_INVENTORY_NOUN.search(text) or _DEMAND_NOUN.search(text)):
+        return True
+
+    # A price report needs a price subject, a price marker and a move -- and no
+    # supply event to attribute it to. "OPEC raises production quotas by 5%"
+    # carries a percentage but is a supply decision, and inverting it is right.
+    if _SUPPLY_EVENT_NOUN.search(text):
+        return False
+    return bool(
+        _PRICE_SUBJECT.search(text)
+        and _PRICE_MARKER.search(text)
+        and (_PRICE_MOVE.search(text) or moved)
+    )

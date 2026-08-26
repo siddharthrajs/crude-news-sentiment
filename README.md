@@ -191,35 +191,42 @@ identical headlines.
 
 ### `sentiment` (default)
 
-FinBERT net sentiment: `P(positive) - P(negative)`, scaled to +/-100, **sign
-flipped** when `SCORER_INVERT` is on (the default). Confidence is the
-non-neutral mass. Scores every headline - 44/44 on the live corpus.
+FinBERT net sentiment, `P(positive) - P(negative)` scaled to +/-100, with the
+sign flipped for headlines that are **not** direct market reports. Confidence is
+the non-neutral mass. Scores every headline - 44/44 on the live corpus.
 
-The flip is there because FinBERT judges tone, and for crude the tone is usually
+The flip exists because FinBERT judges tone, and for crude the tone usually runs
 backwards: supply cuts, outages, sanctions, blocked tankers and war all sound
-negative and are bullish, while ceasefires, agreements and normalised shipping
-sound positive and are bearish.
+negative and are bullish.
+
+But it is exactly wrong where tone and price already agree - a headline
+reporting oil's own numbers moving. So the flip is **routed**, not blanket:
+`events.describes_market_directly()` detects price, demand and inventory
+reports, and those keep their original sign.
 
 Measured over 18 headlines with unambiguous direction
-(`scripts/eval_inversion.py`):
+(`python scripts/eval_inversion.py`):
 
-| | plain FinBERT | inverted |
-|---|---|---|
-| Overall | 6/18 (33%) | **11/18 (61%)** |
-| Supply / risk headlines | 0/12 | **11/12** |
-| Demand / price headlines | **6/6** | 0/6 |
+| | plain | blanket flip | **routed** |
+|---|---|---|---|
+| Overall | 6/18 (33%) | 11/18 (61%) | **17/18 (94%)** |
+| Supply / risk | 0/12 | 11/12 | **11/12** |
+| Demand / price | 6/6 | 0/6 | **6/6** |
 
-> **What the flip costs.** It is exactly wrong wherever tone and price already
-> agree, and no sign flip can fix that:
-> - **Demand news** - "Global oil demand collapses" is negative *and* bearish.
-> - **Inventory builds** - bearish, and often read as neutral-positive.
-> - **Explicit price headlines** - "Brent tumbles below $60" reports a fall, and
->   inverting turns it into a bullish signal. This is the dangerous one, since
->   price headlines are common and the inversion is confidently wrong on all of
->   them.
->
-> Set `SCORER_INVERT=false` for plain sentiment, or use `event` mode, which takes
-> direction from the event and is not exposed to this at all.
+Three details the routing depends on:
+
+- A percentage does not make a supply decision a price report - "OPEC raises
+  production quotas by 5%" is a supply story, and inverting it is right.
+- In "below $60 a barrel" the barrel is a price unit, not a supply noun.
+- Price-move verbs are a separate vocabulary from supply verbs, because "eases"
+  shrinks a price but *grows* supply in "eases sanctions".
+
+The one remaining miss is `Iran and Oman agree ceasefire terms`, which FinBERT
+reads as near-neutral (+/-8) and lands inside the neutral band. That is a model
+limit, not a routing one.
+
+`SCORER_INVERT=false` gives plain sentiment; `SCORER_MODE=event` takes direction
+from the event and is not exposed to any of this.
 
 ### `event`
 

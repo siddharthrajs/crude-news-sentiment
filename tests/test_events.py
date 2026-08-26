@@ -151,3 +151,62 @@ def test_headlines_with_no_event_are_unknown(title):
     event = events.classify(title)
     assert event.kind == events.UNKNOWN
     assert event.direction == 0
+
+
+# --- inversion routing ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Brent crude tumbles below $60 a barrel",
+        "Oil slides 3% as the session closes weaker",
+        "Oil prices rally on strong demand outlook",
+        "WTI settles higher for a third session",
+        "Global oil demand collapses as recession deepens",
+        "China crude imports slump to a three-year low",
+        "US crude inventories post a huge unexpected build",
+    ],
+)
+def test_market_reports_are_routed_away_from_inversion(title):
+    """Tone already agrees with price here, so flipping the sign breaks them."""
+    assert events.describes_market_directly(title)
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "OPEC announces deep cuts to crude production quotas",
+        "OPEC raises production quotas sharply by 5%",
+        "Saudi Arabia slashes oil output by two million barrels per day",
+        "Libya declares force majeure on crude exports after pipeline damage",
+        "Shipper MSC halts Russian Black Sea service after drone attack",
+        "Iran threatens to close the Strait of Hormuz",
+    ],
+)
+def test_supply_events_stay_on_the_inverted_path(title):
+    """Grim news about supply is bullish, so these keep the flip."""
+    assert not events.describes_market_directly(title)
+
+
+def test_a_percentage_does_not_make_a_supply_decision_a_price_report():
+    """"OPEC raises production quotas by 5%" is a supply story, not a quote."""
+    assert not events.describes_market_directly("OPEC raises production quotas by 5%")
+
+
+def test_barrel_as_a_price_unit_is_not_a_supply_noun():
+    """In "below $60 a barrel" the barrel is the unit, not the story."""
+    assert events.describes_market_directly("Brent crude tumbles below $60 a barrel")
+    assert not events.describes_market_directly(
+        "Saudi Arabia cuts output by two million barrels per day"
+    )
+
+
+def test_price_move_vocabulary_is_separate_from_supply():
+    """"eases" shrinks a price but grows supply in "eases sanctions"."""
+    assert events.describes_market_directly("Oil prices ease 2% in the session")
+    assert not events.describes_market_directly("US eases sanctions on Iranian crude exports")
+
+
+def test_blank_title_is_not_a_market_report():
+    assert not events.describes_market_directly("")
