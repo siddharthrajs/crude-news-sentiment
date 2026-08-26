@@ -3,8 +3,9 @@
 Real-time sentiment pipeline for crude oil and geopolitics headlines from
 [FinancialJuice](https://www.financialjuice.com/), delivered to Microsoft Teams.
 
-**Status: stage 1 of 5 (ingestion).** The poller captures and stores headlines.
-Filtering, scoring and Teams delivery are not built yet.
+**Status: stage 1 done, stage 5 scaffolded.** The poller captures headlines and the
+market index engine is built and tested. Filtering, scoring and Teams delivery are
+not built yet, so `/index` returns `no data` until scores exist.
 
 ## Pipeline
 
@@ -14,7 +15,8 @@ Filtering, scoring and Teams delivery are not built yet.
 | 2. Filter | Split `oil_direct` / `geo_risk` from noise | todo |
 | 3. Score | Supply/demand event model → bullish/bearish | todo |
 | 4. Notify | Adaptive Card → Teams group chat | todo |
-| 5. Backtest | Score vs WTI/Brent moves | todo |
+| 5. Index | Cumulative 7-day bull/bear measure | ✅ engine done, needs stage 3 |
+| 6. Backtest | Index vs WTI/Brent moves | todo |
 
 ## Feed behaviour
 
@@ -45,6 +47,47 @@ poll costs a full interval of headlines.
   These are structured, not narrative — stage 2 must route them separately, and for
   EIA/API inventories the *surprise vs forecast* is the signal, not the wording.
 
+## The market index
+
+`GET /index` returns a cumulative bull/bear measure over a trailing window
+(7 days by default) of scored headlines. Three deliberate choices:
+
+**Weighted mean, not a sum.** A sum tracks *news volume* rather than sentiment —
+a quiet bullish week would score below a noisy, evenly-split one. Dividing by
+total weight keeps the index in `[-100, +100]` and comparable week to week.
+
+**Exponential time decay**, halving every `INDEX_HALF_LIFE_HOURS` (default 24),
+so a six-day-old headline does not count like an hour-old one.
+
+**Never read `index_value` alone.** A value near zero has two completely
+different meanings, and the accompanying fields are what separate them:
+
+| Field | Why it matters |
+|---|---|
+| `volume` | Headlines in the window |
+| `effective_n` | Kish effective sample size — collapses toward 1 when one headline dominates the weights |
+| `dispersion` | Weighted spread. High + index≈0 means a **split** market, not a quiet one |
+| `bull_share` / `bear_share` | Weight split by direction |
+| `zscore` | Position against the index's own history; `null` until 30 snapshots exist |
+
+Per-headline weights are `time_decay × confidence × novelty × salience`.
+`confidence`, `novelty` and `salience` come from the scorer — story-clustering
+belongs to stage 3, and this module only consumes its output.
+
+### Why scores are a separate table
+
+`headline_scores` is keyed on `(headline_id, scorer_version)` rather than being
+columns on `headlines`. The scoring model will be retuned repeatedly; storing
+scores inline would destroy the previous values on every retune and make it
+impossible to compare a new scorer against the old one on identical input.
+Rescoring the corpus is an insert, and two versions can be diffed directly.
+
+`index_snapshots` is not a cache — the index is cheap to recompute. It exists
+because the index's *own* history is what you chart and z-score against, and
+that history cannot be rebuilt later, since a rescore changes what past values
+would have been. Empty windows are not snapshotted: recording `0.0` for
+"no data" would drag the baseline toward neutral.
+
 ## Local development
 
 ```bash
@@ -74,7 +117,9 @@ Create a **Docker Compose** resource pointing at this repo. Set environment vari
 | `POLL_INTERVAL_SECONDS` | defaults to `90` |
 | `LOG_LEVEL` | defaults to `INFO` |
 
-`DATABASE_URL` is wired to the `db` service by compose. Point Coolify's healthcheck
+To use an existing Postgres instead of the bundled one, set `DATABASE_URL` to
+`postgresql+psycopg://user:pass@host:5432/dbname` and drop the `db` service.
+Otherwise `DATABASE_URL` is wired to the `db` service by compose. Point Coolify's healthcheck
 at `/health`; it reports `degraded` only when the last three polls all failed, so a
 single transient 429 will not restart the container.
 

@@ -7,7 +7,10 @@ SQLite (local dev) and Postgres (Coolify).
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    JSON,
     DateTime,
+    Float,
+    ForeignKey,
     Index,
     Integer,
     String,
@@ -63,3 +66,75 @@ class PollRun(Base):
     items_new: Mapped[int] = mapped_column(Integer, default=0)
     ok: Mapped[bool] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class HeadlineScore(Base):
+    """A score produced by one version of the scorer for one headline.
+
+    Keyed on (headline_id, scorer_version) rather than living on `headlines`,
+    because the scoring model will be retuned repeatedly. Storing scores as a
+    column would destroy the old values on every retune and make it impossible
+    to compare a new scorer against the old one on identical input. Here,
+    rescoring the whole corpus is an insert, and two versions can be diffed.
+    """
+
+    __tablename__ = "headline_scores"
+    __table_args__ = (
+        UniqueConstraint("headline_id", "scorer_version", name="uq_score_headline_version"),
+        Index("ix_scores_version_category", "scorer_version", "category"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    headline_id: Mapped[int] = mapped_column(
+        ForeignKey("headlines.id", ondelete="CASCADE"), nullable=False
+    )
+    scorer_version: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # oil_direct | geo_risk | calendar | irrelevant
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    #: Bearish -100 .. +100 bullish.
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+
+    #: Aggregation weights, all 0..1, supplied by the scorer.
+    confidence: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    #: Downweights a story the feed has already told us -- see index docstring.
+    novelty: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    #: How much this event moves crude at all (OPEC decision >> minor producer).
+    salience: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+
+    label: Mapped[str | None] = mapped_column(String(32))
+    #: Per-component breakdown, so a score is auditable after the fact.
+    components: Mapped[dict | None] = mapped_column(JSON)
+    scored_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class IndexSnapshot(Base):
+    """The market index as computed at one point in time.
+
+    The index is cheap to recompute from `headline_scores`, so this is not a
+    cache. It exists because the index's own history is the thing you want to
+    chart and to z-score against -- and that history cannot be reconstructed
+    later, since a rescore would change what past values "were".
+    """
+
+    __tablename__ = "index_snapshots"
+    __table_args__ = (
+        Index("ix_snapshots_captured", "captured_at"),
+        Index("ix_snapshots_version_category", "scorer_version", "category"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    scorer_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    window_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    half_life_hours: Mapped[float] = mapped_column(Float, nullable=False)
+
+    index_value: Mapped[float] = mapped_column(Float, nullable=False)
+    volume: Mapped[int] = mapped_column(Integer, nullable=False)
+    effective_n: Mapped[float] = mapped_column(Float, nullable=False)
+    dispersion: Mapped[float] = mapped_column(Float, nullable=False)
+    bull_share: Mapped[float] = mapped_column(Float, nullable=False)
+    bear_share: Mapped[float] = mapped_column(Float, nullable=False)
