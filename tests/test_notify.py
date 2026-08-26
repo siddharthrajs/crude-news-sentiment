@@ -70,7 +70,7 @@ def test_payload_is_an_adaptive_card_envelope():
     assert card_of(payload)["type"] == "AdaptiveCard"
 
 
-def test_card_is_a_sender_line_and_the_headline():
+def test_unscored_card_is_a_sender_line_and_the_headline():
     body = card_of(notify.build_payload(FakeHeadline()))["body"]
     assert len(body) == 2
     assert body[0]["text"] == "_Siddharth Raj:_"
@@ -97,16 +97,24 @@ def test_no_button_no_category_no_facts():
     assert "GEOPOLITICS" not in texts(notify.build_payload(FakeHeadline()))
 
 
-def test_score_is_accepted_but_not_rendered():
-    """The signature stays stable for the pipeline; the card shows nothing.
-
-    Once CrudeBERT lands the score will need somewhere to go.
-    """
+def test_scored_card_adds_one_score_line():
     payload = notify.build_payload(
-        FakeHeadline(), score=Score(72.0, "bullish", 0.8, "supply_down"), index=24.2
+        FakeHeadline(), score=Score(72.0, "bullish", 0.8, "supply_down")
     )
-    assert len(card_of(payload)["body"]) == 2
-    assert not [t for t in texts(payload) if "BULLISH" in t or "72" in t]
+    assert texts(payload) == ["_Siddharth Raj:_", FakeHeadline.title, "BULLISH  +72"]
+
+
+def test_bullish_and_bearish_are_coloured_differently():
+    bull = notify.build_payload(FakeHeadline(), score=Score(72.0, "bullish", 0.8))
+    bear = notify.build_payload(FakeHeadline(), score=Score(-60.0, "bearish", 0.7))
+    assert card_of(bull)["body"][2]["color"] == "Good"
+    assert card_of(bear)["body"][2]["color"] == "Attention"
+    assert card_of(bear)["body"][2]["text"] == "BEARISH  -60"
+
+
+def test_no_score_line_when_unscored():
+    """A rendered zero would be indistinguishable from a balanced reading."""
+    assert len(card_of(notify.build_payload(FakeHeadline()))["body"]) == 2
 
 
 def test_headline_without_a_link_is_unaffected():

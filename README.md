@@ -307,7 +307,8 @@ A plain `{"text": ...}` body is accepted by the trigger with a 202 and then
 fails the run, which is a confusing way to find this out. So the payload is the
 card itself and the flow is a dumb pipe.
 
-The card is deliberately minimal — a grey italic sender line, then the headline:
+The card is deliberately minimal — a grey italic sender line, the headline, and
+a score line when the headline scored:
 
 ```json
 {
@@ -318,7 +319,8 @@ The card is deliberately minimal — a grey italic sender line, then the headlin
       "type": "AdaptiveCard", "version": "1.4",
       "body": [
         {"type": "TextBlock", "text": "_Siddharth Raj:_", "isSubtle": true, "wrap": true},
-        {"type": "TextBlock", "text": "Trump: A lot of oil is pouring out of Hormuz", "wrap": true}
+        {"type": "TextBlock", "text": "Trump: A lot of oil is pouring out of Hormuz", "wrap": true},
+        {"type": "TextBlock", "text": "BULLISH  +36", "color": "Good", "weight": "Bolder"}
       ]
     }
   }]
@@ -329,9 +331,9 @@ The card is deliberately minimal — a grey italic sender line, then the headlin
 `TextBlock` renders. Both blocks set `wrap` — headlines run long and are
 truncated without it.
 
-`build_payload` still accepts `score` and `index` so the pipeline call signature
-stays stable, but the card renders neither. **Open question:** once CrudeBERT
-lands, the score needs somewhere to go and this card has no room for it.
+The score line is green for bullish, red for bearish. An unscored headline gets
+**no score line at all** rather than a rendered `+0`, which would be
+indistinguishable from a genuinely balanced reading.
 
 ## The market index
 

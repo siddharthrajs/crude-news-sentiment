@@ -102,6 +102,9 @@ def _bearer_token() -> str | None:
 #: Shown above every headline, grey and italic.
 SENDER_NAME = "Siddharth Raj"
 
+#: Direction -> Adaptive Card colour. Teams accepts only this fixed vocabulary.
+_DIRECTION_COLOUR = {"bullish": "Good", "bearish": "Attention", "neutral": "Default"}
+
 
 def build_payload(headline, score=None, index=None) -> dict:
     """Build the Adaptive Card posted to the flow.
@@ -111,11 +114,40 @@ def build_payload(headline, score=None, index=None) -> dict:
     body is accepted by the trigger (202) and then fails the run. So the payload
     is the card itself, and the flow is a dumb pipe.
 
-    The card is deliberately just a sender line and the headline. `score` and
-    `index` are still accepted so the pipeline's call signature stays stable,
-    but nothing renders them -- once CrudeBERT lands, the score needs somewhere
-    to go and this card has no room for it.
+    Three lines at most: sender, headline, and the score when there is one. An
+    unscored headline gets no score line at all rather than a rendered zero,
+    which would be indistinguishable from a genuinely balanced reading.
     """
+    body = [
+        {
+            # isSubtle greys the text; the underscores are markdown italics,
+            # which TextBlock renders.
+            "type": "TextBlock",
+            "text": "_" + SENDER_NAME + ":_",
+            "isSubtle": True,
+            "wrap": True,
+            "spacing": "None",
+        },
+        {
+            "type": "TextBlock",
+            "text": headline.title,
+            "wrap": True,
+            "spacing": "Small",
+        },
+    ]
+
+    if score is not None:
+        body.append(
+            {
+                "type": "TextBlock",
+                "text": "%s  %+.0f" % (score.direction.upper(), score.value),
+                "weight": "Bolder",
+                "color": _DIRECTION_COLOUR.get(score.direction, "Default"),
+                "wrap": True,
+                "spacing": "Small",
+            }
+        )
+
     return {
         "type": "message",
         "attachments": [
@@ -126,23 +158,7 @@ def build_payload(headline, score=None, index=None) -> dict:
                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
                     "type": "AdaptiveCard",
                     "version": "1.4",
-                    "body": [
-                        {
-                            # isSubtle greys the text; the underscores are
-                            # markdown italics, which TextBlock renders.
-                            "type": "TextBlock",
-                            "text": "_" + SENDER_NAME + ":_",
-                            "isSubtle": True,
-                            "wrap": True,
-                            "spacing": "None",
-                        },
-                        {
-                            "type": "TextBlock",
-                            "text": headline.title,
-                            "wrap": True,
-                            "spacing": "Small",
-                        },
-                    ],
+                    "body": body,
                 },
             }
         ],

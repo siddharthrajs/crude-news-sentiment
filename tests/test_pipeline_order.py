@@ -140,8 +140,26 @@ def test_scorer_is_called_for_relevant_headlines(session, teams, monkeypatch):
     monkeypatch.setattr(poller.scoring, "score", fake_score)
     poller._insert_new(session, [item(1, GEO), item(2, NOISE)])
     assert scored == [GEO]
+    assert "BULLISH  +72" in texts(teams[0])
 
 
-def test_card_carries_only_the_sender_line_and_headline(session, teams):
+def test_unscorable_headline_sends_no_score_line(session, teams, monkeypatch):
+    monkeypatch.setattr(poller.scoring, "score", lambda h: None)
     poller._insert_new(session, [item(1, GEO)])
     assert texts(teams[0]) == ["_Siddharth Raj:_", GEO]
+
+
+def test_score_is_persisted_alongside_the_headline(session, teams, monkeypatch):
+    """The index reads headline_scores, so the row has to land."""
+    from cns.models import HeadlineScore
+    from cns.scoring import Score
+
+    monkeypatch.setattr(
+        poller.scoring, "score",
+        lambda h: Score(value=72.0, direction="bullish", confidence=0.8, event="supply_down"),
+    )
+    poller._insert_new(session, [item(1, GEO)])
+    row = session.scalar(select(HeadlineScore))
+    assert row.score == 72.0
+    assert row.label == "bullish"
+    assert row.headline_id is not None
