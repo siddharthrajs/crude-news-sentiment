@@ -14,6 +14,14 @@ dependencies = [
     "pydantic-settings>=2.2",
 ]
 
+[project.optional-dependencies]
+# Zero-shot relevance. Heavy (~2GB) and not needed to run the pipeline, so it
+# is kept out of the base install.
+ml = [
+    "torch>=2.2",
+    "transformers>=4.40",
+]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

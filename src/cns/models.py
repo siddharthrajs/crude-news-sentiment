@@ -69,6 +69,13 @@ class Headline(Base):
     #: Lexicon terms that triggered the match, so a decision can be audited.
     relevance_terms: Mapped[str | None] = mapped_column(String(200))
 
+    #: Second opinion from the zero-shot model. Null until it has run, and stays
+    #: null if the `ml` extra is not installed. Never overwrites `category` --
+    #: the two are compared, not merged, so disagreements stay visible.
+    zs_category: Mapped[str | None] = mapped_column(String(16))
+    zs_score: Mapped[float | None] = mapped_column(Float)
+    zs_scored_at: Mapped[datetime | None] = mapped_column(DateTime)
+
 
 class PollRun(Base):
     """One poll attempt. Gives us an audit trail for feed reliability."""

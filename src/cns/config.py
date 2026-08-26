@@ -21,6 +21,20 @@ class Settings(BaseSettings):
     #: time on `kind` and `category`, not by throwing rows away.
     store_irrelevant: bool = True
 
+    #: Zero-shot relevance as a second opinion. Needs the `ml` extra installed.
+    zeroshot_enabled: bool = False
+    zeroshot_model: str = "facebook/bart-large-mnli"
+    #: Minimum combined probability of the two relevant categories for a
+    #: headline to count as relevant -- oil+geo mass, not the top-1 score.
+    #: Swept against the labelled set by scripts/tune_zeroshot.py: 0.80 gives
+    #: recall 0.89 / precision 0.96. Note the softmax has two relevant labels
+    #: against one, so combined mass sits near 0.67 at chance -- anything below
+    #: ~0.7 keeps almost everything.
+    zeroshot_threshold: float = 0.80
+    #: Headlines per pass. Kept small so a backlog never blocks ingestion.
+    zeroshot_batch_size: int = 16
+    zeroshot_interval_minutes: int = 5
+
     #: Bump whenever scoring logic changes -- old scores are kept, not overwritten.
     scorer_version: str = "v0"
     index_window_days: int = 7

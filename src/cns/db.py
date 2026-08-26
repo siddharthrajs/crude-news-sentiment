@@ -60,6 +60,9 @@ _ADDED_COLUMNS = (
     ("headlines", "category", "VARCHAR(16) NOT NULL DEFAULT 'oil_direct'"),
     ("headlines", "relevance_terms", "VARCHAR(200)"),
     ("poll_runs", "items_filtered", "INTEGER NOT NULL DEFAULT 0"),
+    ("headlines", "zs_category", "VARCHAR(16)"),
+    ("headlines", "zs_score", "DOUBLE PRECISION" if IS_POSTGRES else "FLOAT"),
+    ("headlines", "zs_scored_at", "TIMESTAMP"),
 )
 
 

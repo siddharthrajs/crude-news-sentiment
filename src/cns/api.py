@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from sqlalchemy import func, select
 
 from .config import settings
-from . import market_index
+from . import market_index, zeroshot
 from .db import SessionLocal, db_label, init_db
 from .models import Headline, HeadlineScore, IndexSnapshot, PollRun
 from .poller import poll_safe
@@ -29,6 +29,19 @@ async def lifespan(app: FastAPI):
         coalesce=True,
         misfire_grace_time=30,
     )
+    if settings.zeroshot_enabled:
+        if zeroshot.is_available():
+            scheduler.add_job(
+                zeroshot_safe,
+                "interval",
+                minutes=settings.zeroshot_interval_minutes,
+                id="zeroshot",
+                max_instances=1,
+                coalesce=True,
+            )
+            log.info("zero-shot second opinion enabled (%s)", settings.zeroshot_model)
+        else:
+            log.warning("ZEROSHOT_ENABLED is set but torch/transformers are missing; skipping")
     scheduler.add_job(
         snapshot_safe,
         "interval",
@@ -44,6 +57,13 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         scheduler.shutdown(wait=False)
+
+
+def zeroshot_safe() -> None:
+    try:
+        zeroshot.score_pending()
+    except Exception:
+        log.exception("unhandled error during zero-shot pass")
 
 
 def snapshot_safe() -> None:
@@ -193,3 +213,43 @@ def market_index_history(category: str = "oil_direct", limit: int = 168):
         }
         for r in reversed(rows)
     ]
+
+
+@app.get("/disagreements")
+def disagreements(limit: int = 50):
+    """Headlines where the lexicon and the zero-shot model disagree.
+
+    This is the reason both run. Each row is either a lexicon blind spot or a
+    model mistake, and reading them is how the labelled set grows past what the
+    lexicon already knows.
+    """
+    with SessionLocal() as session:
+        rows = list(
+            session.scalars(
+                select(Headline)
+                .where(
+                    Headline.zs_category.is_not(None),
+                    Headline.zs_category != Headline.category,
+                )
+                .order_by(Headline.published_at.desc())
+                .limit(min(limit, 200))
+            )
+        )
+        pending = session.scalar(
+            select(func.count(Headline.id)).where(Headline.zs_category.is_(None))
+        ) or 0
+    return {
+        "pending_zeroshot": pending,
+        "disagreements": [
+            {
+                "id": r.id,
+                "title": r.title,
+                "lexicon": r.category,
+                "lexicon_terms": r.relevance_terms.split(",") if r.relevance_terms else [],
+                "zeroshot": r.zs_category,
+                "zeroshot_score": r.zs_score,
+                "published_at": r.published_at.isoformat() if r.published_at else None,
+            }
+            for r in rows
+        ],
+    }

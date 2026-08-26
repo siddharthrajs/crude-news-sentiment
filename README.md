@@ -128,6 +128,56 @@ the negative examples the lexicon has to be tuned against, and the feed's
 to discover one the lexicon wrongly dropped. Setting it to `false` stores only
 `oil_direct` and `geo_risk`, at that cost.
 
+## Zero-shot second opinion (optional)
+
+A `facebook/bart-large-mnli` classifier runs alongside the lexicon and records a
+second verdict in `zs_category` / `zs_score`. It is **advisory** — it never
+overwrites `category`. The point is `GET /disagreements`: where the two differ
+is either a lexicon blind spot or a model mistake, and reading those is how the
+labelled set grows past what the lexicon already knows.
+
+Enable with `ZEROSHOT_ENABLED=true` and the `ml` extra installed
+(`pip install -e ".[ml]"`, or `--build-arg INSTALL_ML=1`). Costs ~2GB RAM and
+~15s cold start; scoring runs on its own 5-minute job so ingestion never waits.
+
+### Picking the decision rule
+
+The obvious rule — take the highest-scoring label — is wrong here. The model
+splits probability across the two relevant labels, so *"Trump says nuclear deal
+with Saudi Arabia will advance"* came back geo 0.48 / oil 0.44: no winner,
+despite 0.92 of the mass saying it is not noise. The rule is therefore
+**combined oil+geo mass against a threshold**, then the larger side names the
+category.
+
+Note the softmax has two relevant labels against one, so combined mass sits near
+0.67 at chance — a threshold below ~0.7 keeps nearly everything. Swept over the
+labelled set with `scripts/tune_zeroshot.py`:
+
+| threshold | recall | precision | accuracy |
+|---|---|---|---|
+| 0.50 | 1.00 | 0.49 | 0.63 |
+| 0.70 | 0.93 | 0.81 | 0.90 |
+| **0.80** | **0.89** | **0.96** | **0.95** |
+| 0.90 | 0.79 | 1.00 | 0.92 |
+
+Scoring each label independently (`multi_label=True`) was tried and is worse —
+recall caps at 0.82.
+
+### Does it actually help?
+
+Not yet, on the data so far. Across 86 narrative headlines the two agree 84% of
+the time, and every disagreement where zero-shot claimed relevance the lexicon
+had missed turned out to be a **model false positive** (two Meta lawsuit
+headlines, one about shipping costs). It found no real lexicon blind spots.
+
+Standalone it scores 86% against the labelled set versus the lexicon's 100% —
+though the lexicon was tuned on that set, so its number is inflated. Taking
+either verdict as relevant gives 98.7%.
+
+The case for keeping it is prospective: it reads meaning rather than words, so
+it should catch phrasings the lexicon has no term for. That has not yet been
+demonstrated on real data, which is why it is off by default.
+
 ## The market index
 
 `GET /index` returns a cumulative bull/bear measure over a trailing window
