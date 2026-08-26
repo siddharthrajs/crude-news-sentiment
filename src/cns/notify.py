@@ -21,6 +21,7 @@ second mode with no credentials configured -- see the README.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 
@@ -29,6 +30,16 @@ import httpx
 from .config import settings
 
 log = logging.getLogger(__name__)
+
+# The webhook URL's `sig` parameter is a credential. httpx logs full request
+# URLs at INFO, so quieten it here too -- this module is importable from
+# scripts that set up their own logging.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+def redact(url: str) -> str:
+    """Webhook URL with its signature masked, safe to log or return in an API."""
+    return re.sub(r"sig=[^&]+", "sig=<redacted>", url or "")
 
 #: Retried; anything else is treated as permanent and not retried.
 _RETRY_STATUS = {408, 429, 500, 502, 503, 504}
@@ -217,29 +228,31 @@ def send_pending(limit: int | None = None, dry_run: bool = False) -> DeliveryRes
     return DeliveryResult(sent=sent, failed=failed)
 
 
-def mark_all_sent() -> int:
-    """Mark every existing relevant headline as already delivered.
+def suppress_backlog(before=None) -> int:
+    """Mark stored headlines as already delivered, so they are never posted.
 
-    Run once before enabling delivery, so switching it on does not replay the
-    whole backlog into the chat.
+    Run before enabling delivery for the first time, or switching it on replays
+    the entire corpus into the chat. Pass `before` to suppress only headlines
+    older than that instant and let anything more recent still go out.
     """
-    from sqlalchemy import select, update
+    from sqlalchemy import update
 
     from .classify import NARRATIVE
     from .db import SessionLocal
     from .models import Headline, utcnow
-
     from .relevance import IRRELEVANT
+
+    conditions = [
+        Headline.notified_at.is_(None),
+        Headline.kind == NARRATIVE,
+        Headline.category != IRRELEVANT,
+    ]
+    if before is not None:
+        conditions.append(Headline.published_at < before)
 
     with SessionLocal() as session:
         result = session.execute(
-            update(Headline)
-            .where(
-                Headline.notified_at.is_(None),
-                Headline.kind == NARRATIVE,
-                Headline.category != IRRELEVANT,
-            )
-            .values(notified_at=utcnow())
+            update(Headline).where(*conditions).values(notified_at=utcnow())
         )
         session.commit()
         return result.rowcount

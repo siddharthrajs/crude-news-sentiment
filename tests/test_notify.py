@@ -128,3 +128,20 @@ def test_unconfigured_delivery_is_skipped_not_failed(monkeypatch):
     monkeypatch.setattr(notify.settings, "teams_enabled", False)
     result = notify.send_pending()
     assert result.skipped and result.sent == 0
+
+
+def test_webhook_signature_is_redacted():
+    """`sig` authenticates the call, so it must never reach a log or an API."""
+    url = (
+        "https://x.powerplatform.com/.../invoke"
+        "?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=RP2iSL_Sm8NT4GLyn"
+    )
+    out = notify.redact(url)
+    assert "RP2iSL_Sm8NT4GLyn" not in out
+    assert "sig=<redacted>" in out
+    assert "api-version=1" in out
+
+
+def test_redacting_handles_missing_signature():
+    assert notify.redact("") == ""
+    assert notify.redact("https://x/invoke?api-version=1") == "https://x/invoke?api-version=1"

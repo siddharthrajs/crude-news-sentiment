@@ -191,8 +191,9 @@ guarantees send-once, so a restart cannot replay the chat. Each run is capped by
 failure stops the run rather than burning through the queue against a broken
 endpoint.
 
-Before enabling for the first time, run `notify.mark_all_sent()` — otherwise the
-entire stored backlog is delivered at once (currently 32 headlines).
+Before enabling for the first time, run `notify.suppress_backlog()` — otherwise
+the entire stored corpus is delivered at once. Pass `before=<datetime>` to
+suppress only older headlines and let recent ones still go out.
 
 ### Trigger authentication
 
@@ -212,6 +213,11 @@ the signature parameters are what authenticate the call.
 Tokens are fetched via client credentials and cached until shortly before expiry
 when OAuth mode is used. A 401 is never retried, since retrying cannot fix a
 credential problem.
+
+The URL's `sig` parameter **is** the credential. httpx logs full request URLs at
+INFO, which would write it into the deployment logs on every send, so the httpx
+logger is pinned to WARNING and `notify.redact()` masks it anywhere a URL is
+surfaced.
 
 ### Payload
 
