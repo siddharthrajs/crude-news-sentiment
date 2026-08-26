@@ -24,7 +24,7 @@ from . import notify, relevance, scoring
 from .classify import NARRATIVE, classify
 from .config import settings
 from .db import SessionLocal
-from .models import Headline, PollRun, utcnow
+from .models import Headline, HeadlineScore, PollRun, utcnow
 from .sources import financial_juice
 
 log = logging.getLogger(__name__)
@@ -93,18 +93,44 @@ def _insert_new(session, items: list[financial_juice.FeedItem]) -> tuple[int, in
             relevance_terms=terms,
         )
         # Teams first, then the database -- the card needs nothing from the row.
-        if _deliver(headline):
+        result = _score(headline)
+        if _deliver(headline, result):
             headline.notified_at = utcnow()
             delivered += 1
 
         session.add(headline)
+        session.flush()
+        if result is not None:
+            session.add(
+                HeadlineScore(
+                    headline_id=headline.id,
+                    scorer_version=settings.scorer_version,
+                    category=headline.category,
+                    score=result.value,
+                    confidence=result.confidence,
+                    label=result.direction,
+                    components=result.components,
+                )
+            )
         session.commit()
         stored += 1
     return stored, filtered, delivered
 
 
-def _deliver(headline) -> bool:
-    """Score a relevant headline and post it to Teams. True if it was sent.
+def _score(headline):
+    """Score a relevant headline, or None. Never raises -- a scorer fault must
+    not cost us the headline or the delivery."""
+    if headline.kind != NARRATIVE or headline.category == relevance.IRRELEVANT:
+        return None
+    try:
+        return scoring.score(headline)
+    except Exception:
+        log.exception("scoring failed for %r", headline.title[:60])
+        return None
+
+
+def _deliver(headline, result=None) -> bool:
+    """Post a relevant headline to Teams. True if it was sent.
 
     Never raises: a delivery failure must not cost us the headline. The row is
     saved either way with `notified_at` left null, so a failed send is visible
@@ -115,7 +141,6 @@ def _deliver(headline) -> bool:
     if not notify.is_configured():
         return False
 
-    result = scoring.score(headline)
     try:
         notify.post(notify.build_payload(headline, score=result))
     except notify.NotifyError as exc:

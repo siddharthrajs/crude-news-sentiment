@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     #: Escape hatch: paste a token directly instead of client credentials.
     teams_bearer_token: str = ""
 
+    #: FinBERT supplies wording intensity only -- never direction. Needs the ml
+    #: extra; without it the scorer runs on rules alone at lower confidence.
+    finbert_enabled: bool = True
+    finbert_model: str = "ProsusAI/finbert"
+
     #: Bump whenever scoring logic changes -- old scores are kept, not overwritten.
     scorer_version: str = "v0"
     index_window_days: int = 7

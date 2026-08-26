@@ -14,7 +14,7 @@ not built yet, so `/index` returns `no data` until scores exist.
 | 1. Ingest | Poll FinancialJuice RSS, dedupe, persist | ✅ done |
 | 2a. Classify | Drop non-narrative feed noise | ✅ done |
 | 2b. Filter | Keep only `oil_direct` / `geo_risk` | ✅ done |
-| 3. Score | Supply/demand event model → bullish/bearish | seam ready, CrudeBERT todo |
+| 3. Score | Event rules + FinBERT intensity | ✅ done |
 | 4. Notify | Power Automate → Teams group chat | ✅ live |
 | 5. Index | Cumulative 7-day bull/bear measure | ✅ engine done, needs stage 3 |
 | 6. Backtest | Index vs WTI/Brent moves | todo |
@@ -177,6 +177,57 @@ either verdict as relevant gives 98.7%.
 The case for keeping it is prospective: it reads meaning rather than words, so
 it should catch phrasings the lexicon has no term for. That has not yet been
 demonstrated on real data, which is why it is off by default.
+
+## Scoring
+
+Direction comes from the **event**, never from tone. Magnitude and confidence are
+separate signals layered on top.
+
+| Event | Price effect |
+|---|---|
+| supply down (cut, outage, sanctions, inventory draw) | bullish |
+| supply up (quota rise, glut, inventory build) | bearish |
+| demand up | bullish |
+| demand down | bearish |
+| risk up (attack, blockade, escalation) | bullish |
+| risk down (ceasefire, agreement, reopening) | bearish |
+
+Inventories are handled explicitly, because they read backwards: a *build* means
+oil sitting unused and is bearish, however positive "rising" sounds.
+
+`score = direction × event_magnitude × entity_weight × (0.5 + 0.5 × intensity)`,
+clamped to ±100. Entity weight ranks OPEC/Saudi above Angola; magnitude rises
+with intensity words and extracted volumes ("two million barrels" as well as
+"2 mln"); hedged headlines ("may consider a proposal") are halved.
+
+**FinBERT supplies intensity only — never direction.** It is asked how *charged*
+the wording is (positive + negative mass), not which way it points.
+
+Unreadable headlines score `None`, not `0.0`. "No event found" and "genuinely
+balanced" must stay distinguishable or the index averages in placeholders.
+On the live corpus roughly 40% of relevant headlines score; the rest are quotes
+and statements with no identifiable event, and abstaining beats inventing one.
+
+### Why not CrudeBERT
+
+`Captain-1337/CrudeBERT` was the intended scorer and does not work. On our
+corpus it predicts the **same class for all 30 headlines**, with per-class
+standard deviation `[0.006, 0.064, 0.064]` — the output barely changes whatever
+it is shown. Opposite-direction controls return byte-identical probabilities:
+
+```
+"OPEC announces deep cuts to crude production quotas"    [0.062, 0.502, 0.435]
+"OPEC raises production quotas sharply for next quarter" [0.062, 0.502, 0.435]
+```
+
+Weights load without a newly-initialized warning, so this is the published
+checkpoint. Its config is also self-contradictory — `id2label` is keyed
+`-1/0/1` and disagrees with `label2id`. `scripts/eval_crudebert.py` reproduces
+all of it.
+
+FinBERT alone is no substitute: it rates "OPEC announces deep cuts" negative at
+0.85 and "OPEC raises production quotas" positive at 0.69 — inverted in both
+directions, which is exactly why direction is taken from the rules instead.
 
 ## Teams delivery
 
