@@ -7,6 +7,7 @@ import time
 
 from sqlalchemy import select
 
+from .classify import classify
 from .db import SessionLocal
 from .models import Headline, PollRun, utcnow
 from .sources import financial_juice
@@ -32,6 +33,7 @@ def _insert_new(session, items: list[financial_juice.FeedItem]) -> int:
     fresh = [item for item in items if item.external_id not in known]
     # Oldest first, so `id` order matches publication order for later stages.
     for item in sorted(fresh, key=lambda i: (i.published_at or utcnow())):
+        kind, rule = classify(item.title)
         session.add(
             Headline(
                 source=financial_juice.SOURCE_NAME,
@@ -40,6 +42,8 @@ def _insert_new(session, items: list[financial_juice.FeedItem]) -> int:
                 raw_title=item.raw_title,
                 link=item.link,
                 published_at=item.published_at,
+                kind=kind,
+                kind_rule=rule,
             )
         )
     return len(fresh)
@@ -78,3 +82,19 @@ def poll_safe() -> None:
         poll_once()
     except Exception:
         log.exception("unhandled error during poll")
+
+
+def reclassify_all() -> dict[str, int]:
+    """Re-run the classifier over every stored headline.
+
+    Safe to run repeatedly: classification is deterministic from the title, so
+    this is how a rule change gets applied to the existing corpus.
+    """
+    counts: dict[str, int] = {}
+    with SessionLocal() as session:
+        for headline in session.scalars(select(Headline)):
+            kind, rule = classify(headline.title)
+            headline.kind, headline.kind_rule = kind, rule
+            counts[kind] = counts.get(kind, 0) + 1
+        session.commit()
+    return counts

@@ -97,8 +97,15 @@ def stats():
         failed = session.scalar(
             select(func.count(PollRun.id)).where(PollRun.ok == 0)
         ) or 0
+        by_kind = dict(
+            session.execute(
+                select(Headline.kind, func.count(Headline.id)).group_by(Headline.kind)
+            ).all()
+        )
     return {
         "headlines": total,
+        "by_kind": by_kind,
+        "narrative": by_kind.get("narrative", 0),
         "latest_published_at": latest.isoformat() if latest else None,
         "polls": polls,
         "polls_failed": failed,
@@ -107,18 +114,24 @@ def stats():
 
 
 @app.get("/headlines")
-def headlines(limit: int = 25):
+def headlines(limit: int = 25, kind: str = "narrative"):
+    """Narrative headlines by default.
+
+    Pass `kind=calendar|widget|research` to inspect what the classifier is
+    excluding, or `kind=all` for everything.
+    """
     with SessionLocal() as session:
-        rows = list(
-            session.scalars(
-                select(Headline).order_by(Headline.published_at.desc()).limit(min(limit, 200))
-            )
-        )
+        query = select(Headline).order_by(Headline.published_at.desc())
+        if kind != "all":
+            query = query.where(Headline.kind == kind)
+        rows = list(session.scalars(query.limit(min(limit, 200))))
     return [
         {
             "id": r.id,
             "published_at": r.published_at.isoformat() if r.published_at else None,
             "title": r.title,
+            "kind": r.kind,
+            "kind_rule": r.kind_rule,
             "link": r.link,
         }
         for r in rows

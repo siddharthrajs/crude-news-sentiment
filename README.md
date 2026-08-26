@@ -12,7 +12,8 @@ not built yet, so `/index` returns `no data` until scores exist.
 | Stage | What it does | Status |
 |---|---|---|
 | 1. Ingest | Poll FinancialJuice RSS, dedupe, persist | ✅ done |
-| 2. Filter | Split `oil_direct` / `geo_risk` from noise | todo |
+| 2a. Classify | Drop non-narrative feed noise | ✅ done |
+| 2b. Filter | Split `oil_direct` / `geo_risk` from the rest | todo |
 | 3. Score | Supply/demand event model → bullish/bearish | todo |
 | 4. Notify | Adaptive Card → Teams group chat | todo |
 | 5. Index | Cumulative 7-day bull/bear measure | ✅ engine done, needs stage 3 |
@@ -42,10 +43,33 @@ poll costs a full interval of headlines.
 - **Dedupe** is on `(source, external_id)` where `external_id` is the RSS `guid`.
 - **Datetimes** are stored as naive UTC so SQLite and Postgres behave identically.
 - The `FinancialJuice: ` title prefix is stripped into `title`; `raw_title` keeps the original.
-- Roughly half the feed is econ-calendar prints
-  (`US MBA 30-Yr Mortgage Rate Actual 6.78% (Forecast -, Previous 6.77%)`).
-  These are structured, not narrative — stage 2 must route them separately, and for
-  EIA/API inventories the *surprise vs forecast* is the signal, not the wording.
+## What gets filtered out
+
+Measured over 100 captured items, **37% of the feed is not a headline at all**.
+`cns.classify` splits it into three kinds, all derived from inspecting real
+captured titles:
+
+| Kind | Share | Example |
+|---|---|---|
+| `narrative` | 63% | `Saudi Aramco offers Arab medium, heavy crude oil for September loading` |
+| `widget` | 17% | `90-Day Correlation Matrix`, `FX Implied Volatility`, `BoJ Interest Rate Probabilities` |
+| `calendar` | 16% | `Swedish PPI YoY Actual 6.4% (Forecast -, Previous 7.4%)` |
+| `research` | 4% | `MUFG: The AUD - FJElite` |
+
+Only `narrative` continues down the pipeline. `/headlines` returns narrative by
+default; pass `?kind=calendar|widget|research|all` to audit what is excluded.
+
+Non-narrative rows are **marked, not deleted**. Re-ingesting is capped by the
+feed's 100-item window, so a dropped row is unrecoverable. `kind` is stored as a
+column (unlike scores) because classification is deterministic from the title:
+`reclassify_all()` re-runs the rules over the corpus idempotently after a rule
+change, losing nothing.
+
+> **Known trade-off:** the `calendar` bucket includes the weekly
+> `US API Crude Oil Stock Change` / `Cushing` / `Distillate` / `Gasoline` prints,
+> which are among the strongest scheduled drivers of crude. They are excluded by
+> choice. The rows are retained, so routing them back in is a filter change plus
+> a surprise-vs-forecast parser — not a re-ingest.
 
 ## The market index
 

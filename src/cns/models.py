@@ -39,6 +39,7 @@ class Headline(Base):
     __table_args__ = (
         UniqueConstraint("source", "external_id", name="uq_headline_source_extid"),
         Index("ix_headlines_published_at", "published_at"),
+        Index("ix_headlines_kind", "kind"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -51,6 +52,14 @@ class Headline(Base):
 
     published_at: Mapped[datetime | None] = mapped_column(DateTime)
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    #: narrative | calendar | widget | research -- see cns.classify.
+    #: Only `narrative` items continue down the pipeline. Non-narrative rows are
+    #: retained rather than dropped: re-ingesting is capped by the feed's
+    #: 100-item window, so a discarded row is gone for good.
+    kind: Mapped[str] = mapped_column(String(16), default="narrative", nullable=False)
+    #: Which rule matched, so a classification can be audited after the fact.
+    kind_rule: Mapped[str | None] = mapped_column(String(48))
 
 
 class PollRun(Base):
