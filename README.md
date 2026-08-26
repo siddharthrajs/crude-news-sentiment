@@ -212,6 +212,19 @@ Before enabling for the first time, run `notify.suppress_backlog()` — otherwis
 the entire stored corpus is delivered at once. Pass `before=<datetime>` to
 suppress only older headlines and let recent ones still go out.
 
+### Do not build the flow from a Microsoft template
+
+Teams stamps every card posted by a template-derived flow with
+*"<name> used a Workflow template to send this card. Get template"*. It comes
+from the `template.id` in the flow's "Do Not Remove FlowIL" node, not from the
+payload, so nothing in the JSON removes it.
+
+Fix: **Save As** the flow in Power Automate and use the copy, which is not
+linked to the template. Or create a blank flow -- Automated cloud flow, skip the
+template picker, trigger *When an HTTP request is received*, action *Post card
+in a chat or channel*. Either way the copy gets its own webhook URL, and the
+original should be switched off so there are not two live endpoints.
+
 ### Trigger authentication
 
 The flow's HTTP trigger has two modes, and the difference decides whether this
