@@ -1,4 +1,19 @@
-"""Poll the feed, store new headlines, record the run."""
+"""The pipeline: fetch -> relevance -> score -> Teams -> database.
+
+Delivery happens inline, as each new headline is processed, rather than a
+separate job sweeping the database for unsent rows.
+
+The one wrinkle is ordering. The Teams payload carries the headline's `id`,
+which only exists once the row is in the database, so each row is `flush()`ed
+first -- staged inside the transaction but not yet durable -- then delivered,
+then committed. The durable write still lands after delivery.
+
+Each headline is committed on its own rather than batching the poll, so an
+interruption mid-poll cannot leave delivered headlines unsaved. The residual
+risk is one duplicate: if delivery succeeds and the commit then fails, the next
+poll sees the headline as new. Duplicating a message is the better failure than
+dropping one.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +22,7 @@ import time
 
 from sqlalchemy import select
 
-from . import relevance
+from . import notify, relevance, scoring
 from .classify import NARRATIVE, classify
 from .config import settings
 from .db import SessionLocal
@@ -57,30 +72,59 @@ def _insert_new(session, items: list[financial_juice.FeedItem]) -> tuple[int, in
     )
 
     fresh = [item for item in items if item.external_id not in known]
-    stored = filtered = 0
-    # Oldest first, so `id` order matches publication order for later stages.
+    stored = filtered = delivered = 0
+    # Oldest first, so the chat reads in the order events happened and `id`
+    # order matches publication order.
     for item in sorted(fresh, key=lambda i: (i.published_at or utcnow())):
         screened = _screen(item.title)
         if screened is None:
             filtered += 1
             continue
         kind, kind_rule, category, terms = screened
-        session.add(
-            Headline(
-                source=financial_juice.SOURCE_NAME,
-                external_id=item.external_id,
-                title=item.title,
-                raw_title=item.raw_title,
-                link=item.link,
-                published_at=item.published_at,
-                kind=kind,
-                kind_rule=kind_rule,
-                category=category,
-                relevance_terms=terms,
-            )
+
+        headline = Headline(
+            source=financial_juice.SOURCE_NAME,
+            external_id=item.external_id,
+            title=item.title,
+            raw_title=item.raw_title,
+            link=item.link,
+            published_at=item.published_at,
+            kind=kind,
+            kind_rule=kind_rule,
+            category=category,
+            relevance_terms=terms,
         )
+        session.add(headline)
+        session.flush()  # assigns id for the payload; not durable yet
+
+        if _deliver(headline):
+            headline.notified_at = utcnow()
+            delivered += 1
+
+        session.commit()
         stored += 1
-    return stored, filtered
+    return stored, filtered, delivered
+
+
+def _deliver(headline) -> bool:
+    """Score a relevant headline and post it to Teams. True if it was sent.
+
+    Never raises: a delivery failure must not cost us the headline. The row is
+    saved either way with `notified_at` left null, so a failed send is visible
+    afterwards rather than silently lost.
+    """
+    if headline.kind != NARRATIVE or headline.category == relevance.IRRELEVANT:
+        return False
+    if not notify.is_configured():
+        return False
+
+    result = scoring.score(headline)
+    try:
+        notify.post(notify.build_payload(headline, score=result))
+    except notify.NotifyError as exc:
+        log.error("Teams delivery failed for %r: %s", headline.title[:60], exc)
+        return False
+    return True
 
 
 def poll_once() -> PollRun:
@@ -88,7 +132,10 @@ def poll_once() -> PollRun:
     result = financial_juice.fetch()
 
     with SessionLocal() as session:
-        new_count, filtered = _insert_new(session, result.items) if result.ok else (0, 0)
+        if result.ok:
+            new_count, filtered, delivered = _insert_new(session, result.items)
+        else:
+            new_count = filtered = delivered = 0
         run = PollRun(
             started_at=utcnow(),
             duration_ms=int((time.monotonic() - started) * 1000),
@@ -104,8 +151,8 @@ def poll_once() -> PollRun:
 
     if result.ok:
         log.info(
-            "poll ok: seen=%d stored=%d filtered=%d in %dms",
-            run.items_seen, run.items_new, run.items_filtered, run.duration_ms,
+            "poll ok: seen=%d stored=%d filtered=%d sent=%d in %dms",
+            run.items_seen, run.items_new, run.items_filtered, delivered, run.duration_ms,
         )
     else:
         log.error("poll failed: %s (status=%s)", result.error, result.status_code)

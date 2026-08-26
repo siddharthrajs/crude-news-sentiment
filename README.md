@@ -14,8 +14,8 @@ not built yet, so `/index` returns `no data` until scores exist.
 | 1. Ingest | Poll FinancialJuice RSS, dedupe, persist | ✅ done |
 | 2a. Classify | Drop non-narrative feed noise | ✅ done |
 | 2b. Filter | Keep only `oil_direct` / `geo_risk` | ✅ done |
-| 3. Score | Supply/demand event model → bullish/bearish | todo |
-| 4. Notify | Power Automate → Teams group chat | ✅ built, needs flow auth fixed |
+| 3. Score | Supply/demand event model → bullish/bearish | seam ready, CrudeBERT todo |
+| 4. Notify | Power Automate → Teams group chat | ✅ live |
 | 5. Index | Cumulative 7-day bull/bear measure | ✅ engine done, needs stage 3 |
 | 6. Backtest | Index vs WTI/Brent moves | todo |
 
@@ -185,11 +185,28 @@ them was retired at the end of 2025, and even before that it only posted to
 *channels* — never to a group chat. The supported route is a Power Automate flow:
 **"When an HTTP request is received"** → **"Post message in a chat or channel"**.
 
-Delivery runs on its own 2-minute job. `notified_at` on each headline is what
-guarantees send-once, so a restart cannot replay the chat. Each run is capped by
-`TEAMS_MAX_PER_RUN` so a backlog cannot dump fifty messages at once, and a
-failure stops the run rather than burning through the queue against a broken
-endpoint.
+Delivery is **inline with the poll** — each new headline is screened, scored and
+posted as it arrives. Nothing on a schedule sweeps the database to send.
+
+```
+RSS ─► dedupe ─► kind ─► relevance ─► score ─► Teams ─► commit
+                                    (skip if irrelevant)
+```
+
+Ordering has one wrinkle: the payload carries the headline's `id`, which only
+exists once the row is in the database. So each row is `flush()`ed — staged in
+the transaction, not yet durable — then delivered, then committed. The durable
+write still lands after delivery.
+
+Each headline is committed on its own rather than batching the poll, so an
+interruption cannot leave delivered headlines unsaved. The residual risk is one
+duplicate: if delivery succeeds and the commit then fails, the next poll sees
+the headline as new. Duplicating a message beats dropping one.
+
+A delivery failure never costs the headline. The row is saved either way with
+`notified_at` left null, so failures stay visible and `POST /notify/retry` can
+resend them. That endpoint is the only thing that reads the database to send,
+and it is manual.
 
 Before enabling for the first time, run `notify.suppress_backlog()` — otherwise
 the entire stored corpus is delivered at once. Pass `before=<datetime>` to

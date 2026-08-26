@@ -43,15 +43,9 @@ async def lifespan(app: FastAPI):
         else:
             log.warning("ZEROSHOT_ENABLED is set but torch/transformers are missing; skipping")
     if notify.is_configured():
-        scheduler.add_job(
-            notify_safe,
-            "interval",
-            minutes=settings.teams_interval_minutes,
-            id="teams",
-            max_instances=1,
-            coalesce=True,
-        )
-        log.info("Teams delivery enabled (every %smin)", settings.teams_interval_minutes)
+        # No scheduled job: delivery happens inline in the poll, as each new
+        # headline is processed. See cns.poller.
+        log.info("Teams delivery enabled (inline with each poll)")
     scheduler.add_job(
         snapshot_safe,
         "interval",
@@ -74,15 +68,6 @@ def zeroshot_safe() -> None:
         zeroshot.score_pending()
     except Exception:
         log.exception("unhandled error during zero-shot pass")
-
-
-def notify_safe() -> None:
-    try:
-        result = notify.send_pending()
-        if result.sent or result.failed:
-            log.info("Teams: sent=%d failed=%d", result.sent, result.failed)
-    except Exception:
-        log.exception("unhandled error during Teams delivery")
 
 
 def snapshot_safe() -> None:
@@ -298,6 +283,18 @@ def notify_status():
         "pending": pending,
         "delivered": delivered,
     }
+
+
+@app.post("/notify/retry")
+def notify_retry(limit: int = 10):
+    """Manually re-send relevant headlines whose inline delivery failed.
+
+    Not part of the automatic pipeline -- nothing on a schedule sweeps the
+    database to send. This exists only so a Teams outage does not permanently
+    swallow the headlines it happened to cover.
+    """
+    result = notify.send_pending(limit=limit)
+    return {"sent": result.sent, "failed": result.failed, "skipped": result.skipped}
 
 
 @app.post("/notify/test")

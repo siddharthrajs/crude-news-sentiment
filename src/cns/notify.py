@@ -99,7 +99,7 @@ def _bearer_token() -> str | None:
     return _token
 
 
-def build_payload(headline, index=None) -> dict:
+def build_payload(headline, score=None, index=None) -> dict:
     """Build the JSON body posted to the flow.
 
     Sends a pre-rendered `text` alongside the structured fields, so the flow
@@ -111,6 +111,8 @@ def build_payload(headline, index=None) -> dict:
     label = "Crude oil" if headline.category == "oil_direct" else "Geopolitics"
 
     lines = [f"**{label}** · {headline.title}"]
+    if score:
+        lines.append(f"**{score.direction.upper()} {score.value:+.0f}** (confidence {score.confidence:.0%})")
     if terms:
         lines.append(f"_matched: {', '.join(terms[:6])}_")
     if headline.link:
@@ -125,11 +127,13 @@ def build_payload(headline, index=None) -> dict:
         "url": headline.link,
         "published_at": headline.published_at.isoformat() if headline.published_at else None,
         "headline_id": headline.id,
-        # Populated once the scorer lands; kept here so the flow can be built
-        # against the final shape now.
-        "score": None,
-        "direction": None,
-        "confidence": None,
+        # Null until the scorer lands, so the flow can be built against the
+        # final shape now. Null means "not scored", which is deliberately not
+        # the same as a neutral 0.
+        "score": score.value if score else None,
+        "direction": score.direction if score else None,
+        "confidence": score.confidence if score else None,
+        "event": score.event if score else None,
         "market_index": index,
     }
 
@@ -176,10 +180,14 @@ def post(payload: dict) -> None:
 
 
 def send_pending(limit: int | None = None, dry_run: bool = False) -> DeliveryResult:
-    """Post relevant headlines that have not been sent yet.
+    """Recovery path: post relevant headlines whose inline delivery failed.
 
-    Ordered oldest-first so the chat reads in the order events happened, and
-    capped per run so a backlog cannot dump fifty messages into the chat at once.
+    **Not** part of the normal flow. Headlines are delivered inline as they are
+    polled (see cns.poller); nothing on a schedule sweeps the database to send.
+    This exists so that a Teams outage does not permanently swallow whatever
+    headlines it happened to cover, and is only reachable via POST /notify/retry.
+
+    Capped per call so a backlog cannot dump fifty messages into the chat.
     """
     from sqlalchemy import select
 
