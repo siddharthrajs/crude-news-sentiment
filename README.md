@@ -26,15 +26,19 @@ Measured against the live feed, not assumed:
 - **Endpoint:** `https://www.financialjuice.com/feed.ashx?xy=rss` (`text/xml; charset=utf-8`)
 - **Window:** 100 items, ~15 hours of history at a typical rate of ~0.11 headlines/min
 - **Rate limit:** Cloudflare allows ~1 request/min per IP. A second request inside
-  that window returns `429` + `Retry-After: ~41-60` and the body `error code: 1015`.
+  that window returns `429` + `Retry-After: 41-60` and the body `error code: 1015`.
+  `POLL_INTERVAL_SECONDS` is 61 — just above the measured floor. Do not go lower.
 
 The 100-item window is the safety net: at 90s polling we only need ~0.2 new items
 per tick, so the poller can be down for hours and still backfill without gaps.
 During heavy news the rate spikes and the window shrinks, so downtime tolerance
 falls — `/stats` tracks failed polls so gaps are visible.
 
-`fetch()` retries **once** on a 429 if `Retry-After` is under 60s, since losing a
-poll costs a full interval of headlines.
+`fetch()` retries once on a 429 **only when the wait finishes well before the
+next scheduled poll**. Retrying blocks the job for the whole wait, which was
+worth it at a 90s interval but is harmful at 61s: a 60s sleep outlives the next
+tick, which APScheduler then skips (`max_instances=1`), turning a 61s cadence
+into ~122s. At 61s a 429 is simply skipped and the next poll picks it up.
 
 ## Design notes
 

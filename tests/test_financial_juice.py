@@ -34,3 +34,26 @@ def test_leaves_unprefixed_titles_alone():
 def test_ignores_entries_without_id_or_title():
     broken = '<rss version="2.0"><channel><item><link>http://x</link></item></channel></rss>'
     assert parse(broken) == []
+
+
+def test_retry_is_skipped_when_it_would_outlast_the_next_poll(monkeypatch):
+    """At a short interval, sleeping through a 429 costs more than it saves.
+
+    A 60s retry at a 61s cadence outlives the next tick, which the scheduler
+    then skips, turning 61s into ~122s.
+    """
+    from cns.config import settings
+    from cns.sources import financial_juice
+
+    monkeypatch.setattr(settings, "poll_interval_seconds", 61)
+    assert not financial_juice._should_retry(60)
+    assert not financial_juice._should_retry(41)
+    assert financial_juice._should_retry(5)
+
+
+def test_retry_still_happens_at_a_long_interval(monkeypatch):
+    from cns.config import settings
+    from cns.sources import financial_juice
+
+    monkeypatch.setattr(settings, "poll_interval_seconds", 300)
+    assert financial_juice._should_retry(60)

@@ -2,8 +2,9 @@
 
 The feed sits behind Cloudflare and rate-limits to roughly one request per
 minute per IP: a second request inside that window returns HTTP 429 with a
-`Retry-After` header (observed ~41s) and the body `error code: 1015`.
-That is why the poll interval is measured in tens of seconds, not seconds.
+`Retry-After` header (observed 41-60s) and the body `error code: 1015`.
+That is why the poll interval is measured in tens of seconds, not seconds, and
+why POLL_INTERVAL_SECONDS should not go below ~61.
 """
 
 from __future__ import annotations
@@ -23,9 +24,21 @@ log = logging.getLogger(__name__)
 SOURCE_NAME = "financialjuice"
 TITLE_PREFIX = "FinancialJuice:"
 
-# A 429 inside a poll costs us a whole interval of headlines, so retry once
-# rather than waiting for the next tick -- but only if the wait is short.
-MAX_RETRY_AFTER_SECONDS = 60
+#: Fallback when a 429 arrives without a Retry-After header.
+DEFAULT_RETRY_AFTER_SECONDS = 60
+
+
+def _should_retry(retry_after: int) -> bool:
+    """Whether retrying inside this poll beats waiting for the next tick.
+
+    Retrying blocks the job for the whole wait. That was worth it at a 90s
+    interval, where a dropped poll cost 90s of headlines. At a 61s interval it
+    is actively harmful: a 60s sleep outlasts the next scheduled tick, which
+    APScheduler then skips (max_instances=1), so one 429 turns a 61s cadence
+    into ~122s. Only retry when the wait finishes comfortably before the next
+    poll would have run anyway.
+    """
+    return retry_after + 2 < settings.poll_interval_seconds * 0.5
 
 
 @dataclass(frozen=True)
@@ -100,7 +113,7 @@ def parse(xml: str) -> list[FeedItem]:
 def _get(client: httpx.Client) -> str:
     resp = client.get(settings.feed_url)
     if resp.status_code == 429:
-        raise RateLimited(int(resp.headers.get("Retry-After", MAX_RETRY_AFTER_SECONDS)))
+        raise RateLimited(int(resp.headers.get("Retry-After", DEFAULT_RETRY_AFTER_SECONDS)))
     resp.raise_for_status()
     return resp.text
 
@@ -117,7 +130,11 @@ def fetch() -> FetchResult:
             try:
                 xml = _get(client)
             except RateLimited as exc:
-                if exc.retry_after > MAX_RETRY_AFTER_SECONDS:
+                if not _should_retry(exc.retry_after):
+                    log.warning(
+                        "rate limited (retry_after=%ss); waiting for the next poll",
+                        exc.retry_after,
+                    )
                     return FetchResult([], 429, f"rate limited, retry_after={exc.retry_after}s")
                 log.warning("rate limited; retrying once in %ss", exc.retry_after + 2)
                 time.sleep(exc.retry_after + 2)

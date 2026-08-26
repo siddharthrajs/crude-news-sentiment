@@ -10,7 +10,10 @@ class Settings(BaseSettings):
     db_schema: str = "cns"
 
     feed_url: str = "https://www.financialjuice.com/feed.ashx?xy=rss"
-    poll_interval_seconds: int = 90
+    #: The feed rate-limits to roughly one request per minute per IP, so this
+    #: sits just above the measured floor. Going lower trips a 429, and the
+    #: retry then blocks the job past the next tick.
+    poll_interval_seconds: int = 61
     http_timeout_seconds: float = 25.0
     user_agent: str = "crude-news-sentiment/0.1"
 
