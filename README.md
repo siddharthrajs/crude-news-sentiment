@@ -407,6 +407,31 @@ curl localhost:8000/headlines?limit=25
 
 Tests: `.venv/Scripts/python -m pytest tests -q`
 
+### Installing torch on Windows
+
+`sentiment` mode needs FinBERT, so the `ml` extra has to be installed. On
+Windows that fails from a deep project path — torch nests files far enough to
+break the 260-character limit, and this project sits at 79 characters inside
+OneDrive:
+
+```
+OSError: [WinError 206] The filename or extension is too long:
+  ...\.venv\Lib\site-packages	orch-2.13.0+cpu.dist-info\licenses	hird_party  kineto\libkineto	hird_party\dynolog	hird_party\prometheus-cpp\...
+```
+
+Enabling `LongPathsEnabled` fixes it but needs admin and changes a system-wide
+registry setting. A directory junction avoids both — it gives pip a short path
+to install *through*, while the files land in the real venv:
+
+```powershell
+New-Item -ItemType Junction -Path C:\cns -Target "<project directory>"
+C:\cns\.venv\Scripts\python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+C:\cns\.venv\Scripts\python -m pip install numpy transformers
+```
+
+Afterwards `.venv` works normally from the original path; the junction is only
+needed when installing. Linux and the Docker image have no such limit.
+
 ## Postgres layout
 
 Tables live in a dedicated **`cns` schema**, not `public`, set by `DB_SCHEMA`.
