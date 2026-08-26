@@ -35,6 +35,24 @@ class Settings(BaseSettings):
     zeroshot_batch_size: int = 16
     zeroshot_interval_minutes: int = 5
 
+    #: Microsoft Teams delivery via a Power Automate flow. Incoming webhooks
+    #: are not usable: the connector was retired end of 2025 and was
+    #: channel-only regardless, never group chats.
+    teams_enabled: bool = False
+    teams_webhook_url: str = ""
+    teams_interval_minutes: int = 2
+    #: Cap per run so a backlog cannot dump the whole corpus into the chat.
+    teams_max_per_run: int = 10
+
+    #: Only needed if the flow's trigger requires Entra OAuth rather than
+    #: being callable by anyone with the URL.
+    teams_tenant_id: str = ""
+    teams_client_id: str = ""
+    teams_client_secret: str = ""
+    teams_scope: str = "https://service.flow.microsoft.com/.default"
+    #: Escape hatch: paste a token directly instead of client credentials.
+    teams_bearer_token: str = ""
+
     #: Bump whenever scoring logic changes -- old scores are kept, not overwritten.
     scorer_version: str = "v0"
     index_window_days: int = 7

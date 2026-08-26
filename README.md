@@ -15,7 +15,7 @@ not built yet, so `/index` returns `no data` until scores exist.
 | 2a. Classify | Drop non-narrative feed noise | ✅ done |
 | 2b. Filter | Keep only `oil_direct` / `geo_risk` | ✅ done |
 | 3. Score | Supply/demand event model → bullish/bearish | todo |
-| 4. Notify | Adaptive Card → Teams group chat | todo |
+| 4. Notify | Power Automate → Teams group chat | ✅ built, needs flow auth fixed |
 | 5. Index | Cumulative 7-day bull/bear measure | ✅ engine done, needs stage 3 |
 | 6. Backtest | Index vs WTI/Brent moves | todo |
 
@@ -177,6 +177,61 @@ either verdict as relevant gives 98.7%.
 The case for keeping it is prospective: it reads meaning rather than words, so
 it should catch phrasings the lexicon has no term for. That has not yet been
 demonstrated on real data, which is why it is off by default.
+
+## Teams delivery
+
+Incoming webhooks are not usable here. The Office 365 connector that provided
+them was retired at the end of 2025, and even before that it only posted to
+*channels* — never to a group chat. The supported route is a Power Automate flow:
+**"When an HTTP request is received"** → **"Post message in a chat or channel"**.
+
+Delivery runs on its own 2-minute job. `notified_at` on each headline is what
+guarantees send-once, so a restart cannot replay the chat. Each run is capped by
+`TEAMS_MAX_PER_RUN` so a backlog cannot dump fifty messages at once, and a
+failure stops the run rather than burning through the queue against a broken
+endpoint.
+
+Before enabling for the first time, run `notify.mark_all_sent()` — otherwise the
+entire stored backlog is delivered at once (currently 32 headlines).
+
+### Trigger authentication
+
+The flow's HTTP trigger has two modes, and the difference decides whether this
+works at all:
+
+| Mode | URL looks like | Config needed |
+|---|---|---|
+| Anonymous *(recommended)* | ends `...invoke?api-version=1&sp=…&sv=…&sig=…` | just `TEAMS_WEBHOOK_URL` |
+| Entra OAuth | ends `...invoke?api-version=1` with no `sig` | `TEAMS_TENANT_ID`, `TEAMS_CLIENT_ID`, `TEAMS_CLIENT_SECRET` |
+
+A URL with no `sig` that returns `DirectApiAuthorizationRequired` is in OAuth
+mode with no credentials set. The fix is normally to open the trigger's advanced
+settings and allow anyone with the URL to call it, then copy the **full** URL —
+the signature parameters are what authenticate the call.
+
+Tokens are fetched via client credentials and cached until shortly before expiry
+when OAuth mode is used. A 401 is never retried, since retrying cannot fix a
+credential problem.
+
+### Payload
+
+The flow receives a pre-rendered `text` plus structured fields, so it works
+whether it posts the text straight through or builds its own Adaptive Card:
+
+```json
+{
+  "text": "**Geopolitics** · Iran and Oman aim for a permanent Hormuz route…",
+  "headline": "Iran and Oman aim for a permanent Hormuz route in 60 days",
+  "category": "geo_risk",
+  "matched_terms": ["hormuz", "iran"],
+  "url": "https://www.financialjuice.com/News/…",
+  "score": null, "direction": null, "confidence": null
+}
+```
+
+`score`, `direction` and `confidence` are null until the scorer lands. They are
+sent now so the flow can be built against the final shape and will not need
+changing later.
 
 ## The market index
 

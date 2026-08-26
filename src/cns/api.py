@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from sqlalchemy import func, select
 
 from .config import settings
-from . import market_index, zeroshot
+from . import market_index, notify, zeroshot
 from .db import SessionLocal, db_label, init_db
 from .models import Headline, HeadlineScore, IndexSnapshot, PollRun
 from .poller import poll_safe
@@ -42,6 +42,16 @@ async def lifespan(app: FastAPI):
             log.info("zero-shot second opinion enabled (%s)", settings.zeroshot_model)
         else:
             log.warning("ZEROSHOT_ENABLED is set but torch/transformers are missing; skipping")
+    if notify.is_configured():
+        scheduler.add_job(
+            notify_safe,
+            "interval",
+            minutes=settings.teams_interval_minutes,
+            id="teams",
+            max_instances=1,
+            coalesce=True,
+        )
+        log.info("Teams delivery enabled (every %smin)", settings.teams_interval_minutes)
     scheduler.add_job(
         snapshot_safe,
         "interval",
@@ -64,6 +74,15 @@ def zeroshot_safe() -> None:
         zeroshot.score_pending()
     except Exception:
         log.exception("unhandled error during zero-shot pass")
+
+
+def notify_safe() -> None:
+    try:
+        result = notify.send_pending()
+        if result.sent or result.failed:
+            log.info("Teams: sent=%d failed=%d", result.sent, result.failed)
+    except Exception:
+        log.exception("unhandled error during Teams delivery")
 
 
 def snapshot_safe() -> None:
@@ -253,3 +272,47 @@ def disagreements(limit: int = 50):
             for r in rows
         ],
     }
+
+
+@app.get("/notify/status")
+def notify_status():
+    from .classify import NARRATIVE
+    from .relevance import IRRELEVANT
+
+    with SessionLocal() as session:
+        pending = session.scalar(
+            select(func.count(Headline.id)).where(
+                Headline.notified_at.is_(None),
+                Headline.kind == NARRATIVE,
+                Headline.category != IRRELEVANT,
+            )
+        ) or 0
+        delivered = session.scalar(
+            select(func.count(Headline.id)).where(Headline.notified_at.is_not(None))
+        ) or 0
+    return {
+        "configured": notify.is_configured(),
+        "enabled": settings.teams_enabled,
+        "webhook_set": bool(settings.teams_webhook_url),
+        "auth_mode": "oauth" if settings.teams_tenant_id or settings.teams_bearer_token else "anonymous",
+        "pending": pending,
+        "delivered": delivered,
+    }
+
+
+@app.post("/notify/test")
+def notify_test():
+    """Post a single synthetic message, to verify the flow end to end."""
+    class _Probe:
+        id = 0
+        title = "Test message from crude-news-sentiment"
+        category = "oil_direct"
+        relevance_terms = "crude,test"
+        link = None
+        published_at = None
+
+    try:
+        notify.post(notify.build_payload(_Probe()))
+    except notify.NotifyError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True}

@@ -76,6 +76,10 @@ class Headline(Base):
     zs_score: Mapped[float | None] = mapped_column(Float)
     zs_scored_at: Mapped[datetime | None] = mapped_column(DateTime)
 
+    #: When this headline was delivered to Teams. Null means unsent; the column
+    #: is what stops a restart from replaying the backlog into the chat.
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime)
+
 
 class PollRun(Base):
     """One poll attempt. Gives us an audit trail for feed reliability."""

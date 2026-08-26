@@ -63,6 +63,7 @@ _ADDED_COLUMNS = (
     ("headlines", "zs_category", "VARCHAR(16)"),
     ("headlines", "zs_score", "DOUBLE PRECISION" if IS_POSTGRES else "FLOAT"),
     ("headlines", "zs_scored_at", "TIMESTAMP"),
+    ("headlines", "notified_at", "TIMESTAMP"),
 )
 
 
