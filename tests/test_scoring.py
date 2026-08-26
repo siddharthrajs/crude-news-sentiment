@@ -1,4 +1,8 @@
-"""Scoring: event sets direction, FinBERT only supplies intensity."""
+"""Scoring in both modes.
+
+sentiment: FinBERT net sentiment of the wording.
+event:     supply/demand rules set direction, FinBERT sets intensity only.
+"""
 
 import pytest
 
@@ -10,10 +14,17 @@ class H:
         self.title = title
 
 
+@pytest.fixture(autouse=True)
+def event_mode(monkeypatch):
+    """Most tests here cover the event scorer; sentiment has its own block."""
+    monkeypatch.setattr(scoring.settings, "scorer_mode", "event")
+
+
 @pytest.fixture
 def no_finbert(monkeypatch):
-    """Rules only -- the scorer must work without torch installed."""
+    """Rules only -- the event scorer must work without torch installed."""
     monkeypatch.setattr(scoring.settings, "finbert_enabled", False)
+    monkeypatch.setattr(scoring, "_finbert_probs", lambda title: None)
 
 
 @pytest.fixture
@@ -25,8 +36,8 @@ def loud_finbert(monkeypatch):
     """
     monkeypatch.setattr(scoring.settings, "finbert_enabled", True)
     monkeypatch.setattr(
-        scoring, "_finbert_intensity",
-        lambda title: (0.95, {"positive": 0.06, "negative": 0.85, "neutral": 0.09}),
+        scoring, "_finbert_probs",
+        lambda title: {"positive": 0.06, "negative": 0.85, "neutral": 0.09},
     )
 
 
@@ -48,7 +59,10 @@ def test_supply_increase_scores_bearish(loud_finbert):
 def test_finbert_changes_size_not_sign(monkeypatch, no_finbert):
     quiet = scoring.score(H("OPEC cuts crude output quotas"))
     monkeypatch.setattr(scoring.settings, "finbert_enabled", True)
-    monkeypatch.setattr(scoring, "_finbert_intensity", lambda t: (1.0, {}))
+    monkeypatch.setattr(
+        scoring, "_finbert_probs",
+        lambda t: {"positive": 0.5, "negative": 0.5, "neutral": 0.0},
+    )
     loud = scoring.score(H("OPEC cuts crude output quotas"))
     assert quiet.direction == loud.direction == "bullish"
     assert loud.value > quiet.value
@@ -99,12 +113,77 @@ def test_rules_only_still_produces_a_direction(no_finbert):
 
 
 def test_finbert_failure_falls_back_to_rules(monkeypatch):
-    """A model fault must not take the pipeline down."""
+    """A model fault must not take the event pipeline down."""
     monkeypatch.setattr(scoring.settings, "finbert_enabled", True)
-
-    def boom(title):
-        raise RuntimeError("model exploded")
-
-    monkeypatch.setattr(scoring, "_load", boom)
+    monkeypatch.setattr(scoring, "_finbert_probs", lambda title: None)
     result = scoring.score(H("OPEC cuts crude output quotas"))
     assert result is not None and result.direction == "bullish"
+
+
+# --- sentiment mode -------------------------------------------------------
+
+
+@pytest.fixture
+def sentiment_mode(monkeypatch):
+    monkeypatch.setattr(scoring.settings, "scorer_mode", "sentiment")
+
+
+def finbert(monkeypatch, positive, negative, neutral):
+    monkeypatch.setattr(
+        scoring, "_finbert_probs",
+        lambda title: {"positive": positive, "negative": negative, "neutral": neutral},
+    )
+
+
+def test_sentiment_is_net_positive_minus_negative(sentiment_mode, monkeypatch):
+    finbert(monkeypatch, 0.80, 0.10, 0.10)
+    result = scoring.score(H("Oil prices rally on strong demand"))
+    assert result.direction == "bullish"
+    assert result.value == pytest.approx(70.0)
+
+
+def test_sentiment_reads_negative_wording_as_bearish(sentiment_mode, monkeypatch):
+    finbert(monkeypatch, 0.06, 0.85, 0.09)
+    result = scoring.score(H("Oil slides as demand falters"))
+    assert result.direction == "bearish"
+    assert result.value == pytest.approx(-79.0)
+
+
+def test_sentiment_inherits_the_tone_inversion(sentiment_mode, monkeypatch):
+    """Documented, not fixed: a supply cut sounds grim and lifts the price.
+
+    Sentiment-only scoring cannot tell the difference. Switch to event mode to
+    avoid this.
+    """
+    finbert(monkeypatch, 0.06, 0.85, 0.09)
+    result = scoring.score(H("OPEC announces deep cuts to crude production"))
+    assert result.direction == "bearish"  # wrong for crude, and inherent
+
+
+def test_balanced_wording_is_called_neutral(sentiment_mode, monkeypatch):
+    finbert(monkeypatch, 0.45, 0.42, 0.13)
+    assert scoring.score(H("OPEC meets on Tuesday")).direction == "neutral"
+
+
+def test_confidence_is_the_non_neutral_mass(sentiment_mode, monkeypatch):
+    finbert(monkeypatch, 0.10, 0.10, 0.80)
+    assert scoring.score(H("Routine update")).confidence == pytest.approx(0.20)
+
+
+def test_sentiment_needs_finbert(sentiment_mode, monkeypatch):
+    """Unlike event mode, there is no rule fallback -- abstain instead."""
+    monkeypatch.setattr(scoring, "_finbert_probs", lambda title: None)
+    assert scoring.score(H("Oil prices rally")) is None
+
+
+def test_mode_is_part_of_the_stored_version(monkeypatch):
+    """Switching modes must not silently mix two scorers under one label."""
+    monkeypatch.setattr(scoring.settings, "scorer_version", "v0")
+    monkeypatch.setattr(scoring.settings, "scorer_mode", "sentiment")
+    assert scoring.version() == "v0-sentiment"
+    monkeypatch.setattr(scoring.settings, "scorer_mode", "event")
+    assert scoring.version() == "v0-event"
+
+
+def test_blank_titles_score_nothing(sentiment_mode):
+    assert scoring.score(H("   ")) is None

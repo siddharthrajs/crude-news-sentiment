@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from sqlalchemy import func, select
 
 from .config import settings
-from . import market_index, notify, zeroshot
+from . import market_index, notify, scoring, zeroshot
 from .db import SessionLocal, db_label, init_db
 from .models import Headline, HeadlineScore, IndexSnapshot, PollRun
 from .poller import poll_safe
@@ -81,7 +81,7 @@ def snapshot_safe() -> None:
             for category in ("oil_direct", "geo_risk"):
                 index = market_index.compute(
                     session,
-                    scorer_version=settings.scorer_version,
+                    scorer_version=scoring.version(),
                     category=category,
                     window_days=settings.index_window_days,
                     half_life_hours=settings.index_half_life_hours,
@@ -183,7 +183,7 @@ def market_index_now(
     with SessionLocal() as session:
         index = market_index.compute(
             session,
-            scorer_version=settings.scorer_version,
+            scorer_version=scoring.version(),
             category=category,
             window_days=window_days or settings.index_window_days,
             half_life_hours=half_life_hours or settings.index_half_life_hours,
@@ -199,7 +199,7 @@ def market_index_history(category: str = "oil_direct", limit: int = 168):
                 select(IndexSnapshot)
                 .where(
                     IndexSnapshot.category == category,
-                    IndexSnapshot.scorer_version == settings.scorer_version,
+                    IndexSnapshot.scorer_version == scoring.version(),
                 )
                 .order_by(IndexSnapshot.captured_at.desc())
                 .limit(min(limit, 1000))

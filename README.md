@@ -180,40 +180,55 @@ demonstrated on real data, which is why it is off by default.
 
 ## Scoring
 
-Direction comes from the **event**, never from tone. Magnitude and confidence are
-separate signals layered on top.
+Two scorers, chosen by `SCORER_MODE`. Scores are stored under a version that
+**includes the mode** (`v0-sentiment`, `v0-event`), so switching adds a second
+opinion rather than overwriting the first and the two stay comparable on
+identical headlines.
+
+### `sentiment` (default)
+
+FinBERT net sentiment: `P(positive) - P(negative)`, scaled to ±100. Confidence
+is the non-neutral mass. Judges the wording, nothing else.
+
+Scores **every** headline — 43/43 on the live corpus — because it reads language
+rather than matching a vocabulary.
+
+> **Inherent limitation:** sentiment is not price direction for commodities.
+> `Shipper MSC halts Russian Black Sea service after drone attack` scores
+> **-90.8 (bearish)** when a shipping halt is bullish for crude. Measured the
+> same way, FinBERT rates "OPEC announces deep cuts" negative at 0.85. This is
+> not tunable — it is what sentiment-only scoring means. Use `event` mode to
+> avoid it.
+
+### `event`
+
+Direction from the supply/demand event in `cns.events`; FinBERT contributes only
+intensity, never direction.
 
 | Event | Price effect |
 |---|---|
 | supply down (cut, outage, sanctions, inventory draw) | bullish |
 | supply up (quota rise, glut, inventory build) | bearish |
-| demand up | bullish |
-| demand down | bearish |
-| risk up (attack, blockade, escalation) | bullish |
-| risk down (ceasefire, agreement, reopening) | bearish |
+| demand up / down | bullish / bearish |
+| risk up / down | bullish / bearish |
 
-Inventories are handled explicitly, because they read backwards: a *build* means
-oil sitting unused and is bearish, however positive "rising" sounds.
+Inventories are handled explicitly because they read backwards: a *build* is oil
+sitting unused and is bearish, however positive "rising" sounds.
 
-`score = direction × event_magnitude × entity_weight × (0.5 + 0.5 × intensity)`,
-clamped to ±100. Entity weight ranks OPEC/Saudi above Angola; magnitude rises
-with intensity words and extracted volumes ("two million barrels" as well as
-"2 mln"); hedged headlines ("may consider a proposal") are halved.
+Immune to the tone inversion, but blind to phrasings its vocabulary misses, and
+it **abstains on ~60%** of relevant headlines (17/43). It has no negation
+handling either — `An agreement ... has not yet been finalised` matches
+"agreement" and scores it as de-escalation.
 
-**FinBERT supplies intensity only — never direction.** It is asked how *charged*
-the wording is (positive + negative mass), not which way it points.
-
-Unreadable headlines score `None`, not `0.0`. "No event found" and "genuinely
+Unreadable headlines score `None`, never `0.0`: "could not be read" and "read as
 balanced" must stay distinguishable or the index averages in placeholders.
-On the live corpus roughly 40% of relevant headlines score; the rest are quotes
-and statements with no identifiable event, and abstaining beats inventing one.
 
 ### Why not CrudeBERT
 
 `Captain-1337/CrudeBERT` was the intended scorer and does not work. On our
-corpus it predicts the **same class for all 30 headlines**, with per-class
-standard deviation `[0.006, 0.064, 0.064]` — the output barely changes whatever
-it is shown. Opposite-direction controls return byte-identical probabilities:
+corpus it predicts the **same class for all 30 headlines**, per-class standard
+deviation `[0.006, 0.064, 0.064]`. Opposite-direction controls return identical
+probabilities:
 
 ```
 "OPEC announces deep cuts to crude production quotas"    [0.062, 0.502, 0.435]
@@ -221,13 +236,8 @@ it is shown. Opposite-direction controls return byte-identical probabilities:
 ```
 
 Weights load without a newly-initialized warning, so this is the published
-checkpoint. Its config is also self-contradictory — `id2label` is keyed
-`-1/0/1` and disagrees with `label2id`. `scripts/eval_crudebert.py` reproduces
-all of it.
-
-FinBERT alone is no substitute: it rates "OPEC announces deep cuts" negative at
-0.85 and "OPEC raises production quotas" positive at 0.69 — inverted in both
-directions, which is exactly why direction is taken from the rules instead.
+checkpoint. Its config is self-contradictory too — `id2label` keyed `-1/0/1`,
+disagreeing with `label2id`. `scripts/eval_crudebert.py` reproduces it.
 
 ## Teams delivery
 

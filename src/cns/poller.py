@@ -104,7 +104,7 @@ def _insert_new(session, items: list[financial_juice.FeedItem]) -> tuple[int, in
             session.add(
                 HeadlineScore(
                     headline_id=headline.id,
-                    scorer_version=settings.scorer_version,
+                    scorer_version=scoring.version(),
                     category=headline.category,
                     score=result.value,
                     confidence=result.confidence,

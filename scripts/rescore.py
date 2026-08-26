@@ -30,7 +30,8 @@ def main() -> int:
     args = parser.parse_args()
 
     init_db()
-    print("scorer version :", settings.scorer_version)
+    print("scorer version :", scoring.version())
+    print("mode           :", settings.scorer_mode)
     print("finbert        :", "on" if scoring.is_available() and settings.finbert_enabled else "rules only")
     print()
 
@@ -38,7 +39,7 @@ def main() -> int:
         already = set(
             session.scalars(
                 select(HeadlineScore.headline_id).where(
-                    HeadlineScore.scorer_version == settings.scorer_version
+                    HeadlineScore.scorer_version == scoring.version()
                 )
             )
         )
@@ -66,7 +67,7 @@ def main() -> int:
                 session.add(
                     HeadlineScore(
                         headline_id=headline.id,
-                        scorer_version=settings.scorer_version,
+                        scorer_version=scoring.version(),
                         category=headline.category,
                         score=result.value,
                         confidence=result.confidence,

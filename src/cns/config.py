@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     #: Escape hatch: paste a token directly instead of client credentials.
     teams_bearer_token: str = ""
 
+    #: sentiment = FinBERT net sentiment of the wording (simple, but inherits
+    #: the tone-vs-price inversion). event = supply/demand rules set direction.
+    #: Scores are stored under separate versions, so switching adds a second
+    #: opinion rather than overwriting the first.
+    scorer_mode: str = "sentiment"
+
     #: FinBERT supplies wording intensity only -- never direction. Needs the ml
     #: extra; without it the scorer runs on rules alone at lower confidence.
     finbert_enabled: bool = True
