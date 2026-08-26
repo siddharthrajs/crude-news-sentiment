@@ -8,6 +8,18 @@ from .config import settings
 from .models import Base
 
 
+def normalize_url(url: str) -> str:
+    """Accept the `postgres://` form that hosting providers hand out.
+
+    SQLAlchemy needs an explicit driver, and rejects the bare `postgres://`
+    scheme outright.
+    """
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+
 def _ensure_sqlite_dir(url: str) -> None:
     if not url.startswith("sqlite"):
         return
@@ -16,12 +28,24 @@ def _ensure_sqlite_dir(url: str) -> None:
     os.makedirs(directory, exist_ok=True)
 
 
-_ensure_sqlite_dir(settings.database_url)
+DATABASE_URL = normalize_url(settings.database_url)
+IS_POSTGRES = DATABASE_URL.startswith("postgresql")
+#: SQLite has no schemas, so this only applies to Postgres.
+SCHEMA = settings.db_schema if (IS_POSTGRES and settings.db_schema) else None
+
+_ensure_sqlite_dir(DATABASE_URL)
+
+_connect_args: dict = {}
+if SCHEMA:
+    # Unqualified names resolve to our schema; `public` stays readable so a
+    # backtest can join headline scores against price tables living there.
+    _connect_args["options"] = f"-csearch_path={SCHEMA},public"
 
 engine = create_engine(
-    settings.database_url,
+    DATABASE_URL,
     pool_pre_ping=True,
     future=True,
+    connect_args=_connect_args,
 )
 
 SessionLocal = sessionmaker(bind=engine, class_=Session, expire_on_commit=False)
@@ -49,10 +73,13 @@ def _apply_additive_migrations() -> None:
 
 
 def init_db() -> None:
+    if SCHEMA:
+        with engine.begin() as conn:
+            conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
     Base.metadata.create_all(engine)
     _apply_additive_migrations()
 
 
 def db_label() -> str:
-    parsed = urlparse(settings.database_url)
-    return parsed.scheme.split("+")[0]
+    scheme = urlparse(DATABASE_URL).scheme.split("+")[0]
+    return f"{scheme}:{SCHEMA}" if SCHEMA else scheme

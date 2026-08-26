@@ -121,7 +121,9 @@ cp .env.example .env
 .venv/Scripts/python -m cns
 ```
 
-Defaults to SQLite at `./data/cns.db`. Then:
+Defaults to SQLite at `./data/cns.db`; set `DATABASE_URL` to use Postgres. The
+provider-style `postgres://` scheme is accepted and given a driver automatically.
+Then:
 
 ```bash
 curl localhost:8000/health          # poll health, for Coolify
@@ -130,6 +132,21 @@ curl localhost:8000/headlines?limit=25
 ```
 
 Tests: `.venv/Scripts/python -m pytest tests -q`
+
+## Postgres layout
+
+Tables live in a dedicated **`cns` schema**, not `public`, set by `DB_SCHEMA`.
+The instance in use already holds ~65 unrelated tables in `public` (Refinitiv
+1-minute bars for WTI `clc*`, Brent `lcoc*`, spreads and `esv1`), so keeping our
+tables separate avoids any chance of a name collision.
+
+The connection sets `search_path=cns,public`, so unqualified names resolve to
+our tables while the price tables stay readable from the same session — a
+backtest can join scores against bars without a cross-database query.
+
+Note for stage 6: in those price tables `datetime` is already **UTC** (it matches
+`datetime_ts` exactly), and `gmt_offset` is exchange metadata that is *not*
+applied to it. Headlines are stored as naive UTC, so the two join directly.
 
 ## Deploying to Coolify
 

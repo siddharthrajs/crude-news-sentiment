@@ -5,6 +5,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "sqlite:///./data/cns.db"
+    #: Postgres schema to own our tables. Keeps them out of `public`, which on a
+    #: shared instance may already hold unrelated data. Ignored for SQLite.
+    db_schema: str = "cns"
 
     feed_url: str = "https://www.financialjuice.com/feed.ashx?xy=rss"
     poll_interval_seconds: int = 90
