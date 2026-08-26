@@ -99,9 +99,6 @@ def _bearer_token() -> str | None:
     return _token
 
 
-#: Shown above every headline, grey and italic.
-SENDER_NAME = "Siddharth Raj"
-
 #: Direction -> Adaptive Card colour. Teams accepts only this fixed vocabulary.
 _DIRECTION_COLOUR = {"bullish": "Good", "bearish": "Attention", "neutral": "Default"}
 
@@ -114,25 +111,16 @@ def build_payload(headline, score=None, index=None) -> dict:
     body is accepted by the trigger (202) and then fails the run. So the payload
     is the card itself, and the flow is a dumb pipe.
 
-    Three lines at most: sender, headline, and the score when there is one. An
+    Two lines at most: the headline, and the score when there is one. An
     unscored headline gets no score line at all rather than a rendered zero,
     which would be indistinguishable from a genuinely balanced reading.
     """
     body = [
         {
-            # isSubtle greys the text; the underscores are markdown italics,
-            # which TextBlock renders.
-            "type": "TextBlock",
-            "text": "_" + SENDER_NAME + ":_",
-            "isSubtle": True,
-            "wrap": True,
-            "spacing": "None",
-        },
-        {
             "type": "TextBlock",
             "text": headline.title,
             "wrap": True,
-            "spacing": "Small",
+            "spacing": "None",
         },
     ]
 

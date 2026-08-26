@@ -71,6 +71,15 @@ def test_tier2_actor_needs_a_risk_term():
     assert classify("Israel and Lebanon agree ceasefire terms")[0] == GEO_RISK
 
 
+def test_diplomacy_counts_as_a_risk_term():
+    """Talks that could end a conflict move crude as much as the conflict does."""
+    title = ("Lebanon's President Aoun continues to advocate for US-brokered "
+             "negotiations with Israel - Fars News")
+    category, terms = classify(title)
+    assert category == GEO_RISK
+    assert "negotiations" in terms
+
+
 def test_producer_nation_alone_is_not_a_signal():
     """The case the tiering exists for: a top-five producer, zero oil content."""
     title = "Canada's PM Carney set to address the EU Parliament in mid-September"

@@ -87,6 +87,11 @@ RISK_TERMS = _alt(
     r"military", r"tensions?", r"prisoners?", r"hostilit\w+", r"airstrikes?",
     r"bomb(?:ed|ing|ings)?", r"shelling", r"insurgen\w+", r"coup",
     r"coalition forces", r"coast ?guard", r"navy", r"naval",
+    # De-escalation is as much a signal as escalation -- "ceasefire" and
+    # "peace" were already here, so the rest of the diplomacy vocabulary
+    # belongs too. Bare "talks" also matches the verb ("Aoun talks to
+    # reporters"), which is the recall-biased trade this filter is making.
+    r"negotiat\w+", r"talks", r"diplomat\w*", r"mediat\w+", r"broker(?:ed|ing)",
 )
 
 #: Cap on how many matched terms are recorded, to keep the audit column small.

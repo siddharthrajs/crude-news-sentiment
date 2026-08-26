@@ -146,7 +146,7 @@ def test_scorer_is_called_for_relevant_headlines(session, teams, monkeypatch):
 def test_unscorable_headline_sends_no_score_line(session, teams, monkeypatch):
     monkeypatch.setattr(poller.scoring, "score", lambda h: None)
     poller._insert_new(session, [item(1, GEO)])
-    assert texts(teams[0]) == ["_Siddharth Raj:_", GEO]
+    assert texts(teams[0]) == [GEO]
 
 
 def test_score_is_persisted_alongside_the_headline(session, teams, monkeypatch):

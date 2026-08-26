@@ -89,4 +89,5 @@ LABELLED: list[tuple[str, str]] = [
     ("Senior Iranian Source: An agreement with Oman over the Strait of Hormuz has not yet been finalised.", GEO_RISK),
     ("Iran and Oman are still working on the details of an agreement over the Strait of Hormuz - Senior Iranian Source.", GEO_RISK),
     ("Effective Fed Funds Rate 3.63% August 25 vs 3.63% August 24.", IRRELEVANT),
+    ("Lebanon's President Aoun continues to advocate for US-brokered negotiations with Israel - Fars News", GEO_RISK),
 ]

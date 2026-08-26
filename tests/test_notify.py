@@ -70,18 +70,16 @@ def test_payload_is_an_adaptive_card_envelope():
     assert card_of(payload)["type"] == "AdaptiveCard"
 
 
-def test_unscored_card_is_a_sender_line_and_the_headline():
+def test_unscored_card_is_just_the_headline():
     body = card_of(notify.build_payload(FakeHeadline()))["body"]
-    assert len(body) == 2
-    assert body[0]["text"] == "_Siddharth Raj:_"
-    assert body[1]["text"] == FakeHeadline.title
+    assert len(body) == 1
+    assert body[0]["text"] == FakeHeadline.title
 
 
-def test_sender_line_is_grey_and_italic():
-    """isSubtle greys it; the underscores are markdown italics."""
-    sender = card_of(notify.build_payload(FakeHeadline()))["body"][0]
-    assert sender["isSubtle"] is True
-    assert sender["text"].startswith("_") and sender["text"].endswith("_")
+def test_card_carries_no_sender_line():
+    """The chat already shows who posted; a name in the card is redundant."""
+    for text in texts(notify.build_payload(FakeHeadline())):
+        assert not text.startswith("_")
 
 
 def test_headline_wraps():
@@ -101,26 +99,26 @@ def test_scored_card_adds_one_score_line():
     payload = notify.build_payload(
         FakeHeadline(), score=Score(72.0, "bullish", 0.8, "supply_down")
     )
-    assert texts(payload) == ["_Siddharth Raj:_", FakeHeadline.title, "BULLISH  +72"]
+    assert texts(payload) == [FakeHeadline.title, "BULLISH  +72"]
 
 
 def test_bullish_and_bearish_are_coloured_differently():
     bull = notify.build_payload(FakeHeadline(), score=Score(72.0, "bullish", 0.8))
     bear = notify.build_payload(FakeHeadline(), score=Score(-60.0, "bearish", 0.7))
-    assert card_of(bull)["body"][2]["color"] == "Good"
-    assert card_of(bear)["body"][2]["color"] == "Attention"
-    assert card_of(bear)["body"][2]["text"] == "BEARISH  -60"
+    assert card_of(bull)["body"][1]["color"] == "Good"
+    assert card_of(bear)["body"][1]["color"] == "Attention"
+    assert card_of(bear)["body"][1]["text"] == "BEARISH  -60"
 
 
 def test_no_score_line_when_unscored():
     """A rendered zero would be indistinguishable from a balanced reading."""
-    assert len(card_of(notify.build_payload(FakeHeadline()))["body"]) == 2
+    assert len(card_of(notify.build_payload(FakeHeadline()))["body"]) == 1
 
 
 def test_headline_without_a_link_is_unaffected():
     headline = FakeHeadline()
     headline.link = None
-    assert len(card_of(notify.build_payload(headline))["body"]) == 2
+    assert len(card_of(notify.build_payload(headline))["body"]) == 1
 
 
 # --- transport ------------------------------------------------------------
