@@ -40,6 +40,7 @@ class Headline(Base):
         UniqueConstraint("source", "external_id", name="uq_headline_source_extid"),
         Index("ix_headlines_published_at", "published_at"),
         Index("ix_headlines_kind", "kind"),
+        Index("ix_headlines_category", "category"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -61,6 +62,13 @@ class Headline(Base):
     #: Which rule matched, so a classification can be audited after the fact.
     kind_rule: Mapped[str | None] = mapped_column(String(48))
 
+    #: oil_direct | geo_risk -- see cns.relevance. Irrelevant headlines are not
+    #: stored at all (unless STORE_IRRELEVANT is on), so this is in practice
+    #: always one of the two relevant values.
+    category: Mapped[str] = mapped_column(String(16), default="oil_direct", nullable=False)
+    #: Lexicon terms that triggered the match, so a decision can be audited.
+    relevance_terms: Mapped[str | None] = mapped_column(String(200))
+
 
 class PollRun(Base):
     """One poll attempt. Gives us an audit trail for feed reliability."""
@@ -73,6 +81,9 @@ class PollRun(Base):
     status_code: Mapped[int | None] = mapped_column(Integer)
     items_seen: Mapped[int] = mapped_column(Integer, default=0)
     items_new: Mapped[int] = mapped_column(Integer, default=0)
+    #: New items discarded by the kind/relevance filters. Counted even though
+    #: the text is not kept, so filter behaviour stays observable over time.
+    items_filtered: Mapped[int] = mapped_column(Integer, default=0)
     ok: Mapped[bool] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text)
 

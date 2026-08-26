@@ -13,7 +13,7 @@ not built yet, so `/index` returns `no data` until scores exist.
 |---|---|---|
 | 1. Ingest | Poll FinancialJuice RSS, dedupe, persist | ✅ done |
 | 2a. Classify | Drop non-narrative feed noise | ✅ done |
-| 2b. Filter | Split `oil_direct` / `geo_risk` from the rest | todo |
+| 2b. Filter | Keep only `oil_direct` / `geo_risk` | ✅ done |
 | 3. Score | Supply/demand event model → bullish/bearish | todo |
 | 4. Notify | Adaptive Card → Teams group chat | todo |
 | 5. Index | Cumulative 7-day bull/bear measure | ✅ engine done, needs stage 3 |
@@ -70,6 +70,56 @@ change, losing nothing.
 > which are among the strongest scheduled drivers of crude. They are excluded by
 > choice. The rows are retained, so routing them back in is a filter change plus
 > a surprise-vs-forecast parser — not a re-ingest.
+
+## Relevance filter
+
+Only headlines about crude oil or oil-relevant geopolitics are **stored at all**.
+Everything else is discarded at ingest.
+
+`oil_direct` is a lexicon hit on the oil complex (crude, Brent, OPEC, bbl,
+refinery, tanker, Cushing, ...). It deliberately excludes the bare word
+*energy*: "civil nuclear energy with Saudi Arabia" is geopolitics, not an oil story.
+
+`geo_risk` is harder, because naming a producer is not enough — *"Canada's PM
+Carney set to address the EU Parliament"* names a top-five producer and means
+nothing for crude. So actors are tiered:
+
+| Tier | Behaviour | Members |
+|---|---|---|
+| Chokepoints | always pass | Hormuz, Bab el-Mandeb, Suez, Red Sea, Malacca, "Middle East" |
+| Tier 1 actors | pass alone | Iran, OPEC, Saudi/Aramco, Russia, Venezuela, Libya, Houthis |
+| Standalone risk | passes alone | sanctions, embargo, oil price cap |
+| Tier 2 actors | need a risk term | Ukraine, Israel, Iraq, Qatar, UAE, Nigeria, Kazakhstan, ... |
+
+Risk terms are war, strike, drone, missile, blockade, seizure, ceasefire,
+nuclear, escalation and similar. Oil wins over geo when both match, being the
+more direct signal. Matched terms are stored in `relevance_terms` so any
+decision can be audited.
+
+### Accuracy
+
+Measured by `python scripts/eval_relevance.py` against `tests/labels.py`, a
+checked-in set of 79 hand-read headlines:
+
+```
+labelled: 79   correct: 79   accuracy: 100.0%
+false positives (noise kept):      0
+false negatives (DROPPED FOREVER): 0
+```
+
+**This is in-sample.** The lexicon was tuned on those same 79 headlines, so
+accuracy will fall on unseen data. The number is a regression guard, not a
+performance claim. `tests/test_relevance.py` ratchets it so a lexicon change
+cannot silently make things worse; the binding assertion is that false
+negatives stay at zero.
+
+> **Trade-off in force:** rejected headlines are **not stored**, by request.
+> That means there are no negative examples to tune against beyond the labelled
+> set, and no way to discover a headline the lexicon wrongly dropped — the feed
+> only exposes a 100-item window, so a discarded row is unrecoverable. Set
+> `STORE_IRRELEVANT=true` to retain them instead. `PollRun.items_filtered`
+> counts what was discarded even when the text is not kept, so the filter's
+> behaviour stays observable.
 
 ## The market index
 

@@ -102,10 +102,17 @@ def stats():
                 select(Headline.kind, func.count(Headline.id)).group_by(Headline.kind)
             ).all()
         )
+        by_category = dict(
+            session.execute(
+                select(Headline.category, func.count(Headline.id)).group_by(Headline.category)
+            ).all()
+        )
+        filtered = session.scalar(select(func.sum(PollRun.items_filtered))) or 0
     return {
         "headlines": total,
         "by_kind": by_kind,
-        "narrative": by_kind.get("narrative", 0),
+        "by_category": by_category,
+        "discarded_by_filters": filtered,
         "latest_published_at": latest.isoformat() if latest else None,
         "polls": polls,
         "polls_failed": failed,
@@ -114,24 +121,24 @@ def stats():
 
 
 @app.get("/headlines")
-def headlines(limit: int = 25, kind: str = "narrative"):
-    """Narrative headlines by default.
+def headlines(limit: int = 25, category: str = "all"):
+    """Stored headlines, newest first.
 
-    Pass `kind=calendar|widget|research` to inspect what the classifier is
-    excluding, or `kind=all` for everything.
+    Only crude-oil and geopolitics headlines are stored, so this returns both
+    by default. Pass `category=oil_direct|geo_risk` to narrow.
     """
     with SessionLocal() as session:
         query = select(Headline).order_by(Headline.published_at.desc())
-        if kind != "all":
-            query = query.where(Headline.kind == kind)
+        if category != "all":
+            query = query.where(Headline.category == category)
         rows = list(session.scalars(query.limit(min(limit, 200))))
     return [
         {
             "id": r.id,
             "published_at": r.published_at.isoformat() if r.published_at else None,
             "title": r.title,
-            "kind": r.kind,
-            "kind_rule": r.kind_rule,
+            "category": r.category,
+            "relevance_terms": r.relevance_terms.split(",") if r.relevance_terms else [],
             "link": r.link,
         }
         for r in rows

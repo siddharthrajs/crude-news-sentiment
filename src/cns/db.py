@@ -57,6 +57,9 @@ SessionLocal = sessionmaker(bind=engine, class_=Session, expire_on_commit=False)
 _ADDED_COLUMNS = (
     ("headlines", "kind", "VARCHAR(16) NOT NULL DEFAULT 'narrative'"),
     ("headlines", "kind_rule", "VARCHAR(48)"),
+    ("headlines", "category", "VARCHAR(16) NOT NULL DEFAULT 'oil_direct'"),
+    ("headlines", "relevance_terms", "VARCHAR(200)"),
+    ("poll_runs", "items_filtered", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 

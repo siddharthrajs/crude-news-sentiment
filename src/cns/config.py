@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     http_timeout_seconds: float = 25.0
     user_agent: str = "crude-news-sentiment/0.1"
 
+    #: Keep headlines the filters reject. Off by request: only crude-oil and
+    #: geopolitics headlines are stored. Turn on to gather negative examples for
+    #: tuning the filter -- rejects cannot be recovered once discarded.
+    store_irrelevant: bool = False
+
     #: Bump whenever scoring logic changes -- old scores are kept, not overwritten.
     scorer_version: str = "v0"
     index_window_days: int = 7
