@@ -14,10 +14,12 @@ class Settings(BaseSettings):
     http_timeout_seconds: float = 25.0
     user_agent: str = "crude-news-sentiment/0.1"
 
-    #: Keep headlines the filters reject. Off by request: only crude-oil and
-    #: geopolitics headlines are stored. Turn on to gather negative examples for
-    #: tuning the filter -- rejects cannot be recovered once discarded.
-    store_irrelevant: bool = False
+    #: Keep headlines the filters reject, labelled but excluded from scoring.
+    #: On by default: the feed only exposes a 100-item window, so a discarded
+    #: headline is unrecoverable, and the rejects are the negative examples the
+    #: relevance lexicon has to be tuned against. Filtering happens at query
+    #: time on `kind` and `category`, not by throwing rows away.
+    store_irrelevant: bool = True
 
     #: Bump whenever scoring logic changes -- old scores are kept, not overwritten.
     scorer_version: str = "v0"

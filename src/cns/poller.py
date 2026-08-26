@@ -20,10 +20,11 @@ log = logging.getLogger(__name__)
 def _screen(title: str) -> tuple[str, str | None, str, str | None] | None:
     """Return the row fields for a headline worth storing, or None to discard.
 
-    Only narrative headlines about crude oil or oil-relevant geopolitics are
-    kept. Set STORE_IRRELEVANT to retain the rest as negative examples for
-    tuning the filter -- once discarded they cannot be recovered, because the
-    feed only exposes a 100-item window.
+    With STORE_IRRELEVANT on (the default) nothing is discarded: every headline
+    is stored with its `kind` and `category` labels, and downstream stages
+    select on those instead. Turning it off stores only narrative crude-oil and
+    geopolitics headlines -- which is unrecoverable, since the feed exposes only
+    a 100-item window.
     """
     kind, kind_rule = classify(title)
     if kind != NARRATIVE:

@@ -49,6 +49,14 @@ Measured over 100 captured items, **37% of the feed is not a headline at all**.
 `cns.classify` splits it into three kinds, all derived from inspecting real
 captured titles:
 
+Current corpus, by `kind` x `category`:
+
+```
+narrative  irrelevant   54     calendar   irrelevant   30
+narrative  geo_risk     27     widget     irrelevant   17
+narrative  oil_direct    5     research   irrelevant    9
+```
+
 | Kind | Share | Example |
 |---|---|---|
 | `narrative` | 63% | `Saudi Aramco offers Arab medium, heavy crude oil for September loading` |
@@ -73,8 +81,9 @@ change, losing nothing.
 
 ## Relevance filter
 
-Only headlines about crude oil or oil-relevant geopolitics are **stored at all**.
-Everything else is discarded at ingest.
+Every headline is **stored and labelled**; the filter decides what moves on to
+scoring, not what survives. Downstream stages select on `kind` and `category`
+rather than relying on rows being absent.
 
 `oil_direct` is a lexicon hit on the oil complex (crude, Brent, OPEC, bbl,
 refinery, tanker, Cushing, ...). It deliberately excludes the bare word
@@ -113,13 +122,11 @@ performance claim. `tests/test_relevance.py` ratchets it so a lexicon change
 cannot silently make things worse; the binding assertion is that false
 negatives stay at zero.
 
-> **Trade-off in force:** rejected headlines are **not stored**, by request.
-> That means there are no negative examples to tune against beyond the labelled
-> set, and no way to discover a headline the lexicon wrongly dropped — the feed
-> only exposes a 100-item window, so a discarded row is unrecoverable. Set
-> `STORE_IRRELEVANT=true` to retain them instead. `PollRun.items_filtered`
-> counts what was discarded even when the text is not kept, so the filter's
-> behaviour stays observable.
+Rejects are retained deliberately (`STORE_IRRELEVANT`, on by default). They are
+the negative examples the lexicon has to be tuned against, and the feed's
+100-item window makes a discarded headline unrecoverable — there would be no way
+to discover one the lexicon wrongly dropped. Setting it to `false` stores only
+`oil_direct` and `geo_risk`, at that cost.
 
 ## The market index
 
