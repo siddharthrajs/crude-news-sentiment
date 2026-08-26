@@ -126,6 +126,13 @@ def test_finbert_failure_falls_back_to_rules(monkeypatch):
 @pytest.fixture
 def sentiment_mode(monkeypatch):
     monkeypatch.setattr(scoring.settings, "scorer_mode", "sentiment")
+    monkeypatch.setattr(scoring.settings, "scorer_invert", False)
+
+
+@pytest.fixture
+def inverted_mode(monkeypatch):
+    monkeypatch.setattr(scoring.settings, "scorer_mode", "sentiment")
+    monkeypatch.setattr(scoring.settings, "scorer_invert", True)
 
 
 def finbert(monkeypatch, positive, negative, neutral):
@@ -149,15 +156,48 @@ def test_sentiment_reads_negative_wording_as_bearish(sentiment_mode, monkeypatch
     assert result.value == pytest.approx(-79.0)
 
 
-def test_sentiment_inherits_the_tone_inversion(sentiment_mode, monkeypatch):
-    """Documented, not fixed: a supply cut sounds grim and lifts the price.
+def test_uninverted_sentiment_gets_supply_cuts_backwards(sentiment_mode, monkeypatch):
+    """Why SCORER_INVERT exists: a supply cut sounds grim and lifts the price."""
+    finbert(monkeypatch, 0.06, 0.85, 0.09)
+    assert scoring.score(H("OPEC announces deep cuts to crude production")).direction == "bearish"
 
-    Sentiment-only scoring cannot tell the difference. Switch to event mode to
-    avoid this.
-    """
+
+def test_inversion_fixes_supply_and_risk_headlines(inverted_mode, monkeypatch):
+    """Measured 11/12 on supply and risk headlines, against 0/12 uninverted."""
     finbert(monkeypatch, 0.06, 0.85, 0.09)
     result = scoring.score(H("OPEC announces deep cuts to crude production"))
-    assert result.direction == "bearish"  # wrong for crude, and inherent
+    assert result.direction == "bullish"
+    assert result.value > 0
+    assert result.components["inverted"] is True
+
+
+def test_inversion_breaks_demand_and_price_headlines(inverted_mode, monkeypatch):
+    """The known cost, measured 0/6. No sign flip can fix this.
+
+    "Global oil demand collapses" is negative *and* bearish; "Brent tumbles
+    below $60" reports a fall that inverting reads as bullish.
+    """
+    finbert(monkeypatch, 0.03, 0.94, 0.03)
+    assert scoring.score(H("Global oil demand collapses")).direction == "bullish"  # wrong
+
+
+def test_inversion_is_recorded_in_the_stored_version(monkeypatch):
+    """Inverted and plain scores must never share a version label."""
+    monkeypatch.setattr(scoring.settings, "scorer_version", "v0")
+    monkeypatch.setattr(scoring.settings, "scorer_mode", "sentiment")
+    monkeypatch.setattr(scoring.settings, "scorer_invert", True)
+    assert scoring.version() == "v0-sentiment-inv"
+    monkeypatch.setattr(scoring.settings, "scorer_invert", False)
+    assert scoring.version() == "v0-sentiment"
+
+
+def test_inversion_does_not_touch_event_mode(monkeypatch):
+    """Event mode takes direction from rules, so there is nothing to flip."""
+    monkeypatch.setattr(scoring.settings, "scorer_mode", "event")
+    monkeypatch.setattr(scoring.settings, "scorer_invert", True)
+    monkeypatch.setattr(scoring, "_finbert_probs", lambda t: None)
+    assert scoring.score(H("OPEC cuts crude output quotas")).direction == "bullish"
+    assert scoring.version() == "v0-event"
 
 
 def test_balanced_wording_is_called_neutral(sentiment_mode, monkeypatch):
@@ -179,6 +219,7 @@ def test_sentiment_needs_finbert(sentiment_mode, monkeypatch):
 def test_mode_is_part_of_the_stored_version(monkeypatch):
     """Switching modes must not silently mix two scorers under one label."""
     monkeypatch.setattr(scoring.settings, "scorer_version", "v0")
+    monkeypatch.setattr(scoring.settings, "scorer_invert", False)
     monkeypatch.setattr(scoring.settings, "scorer_mode", "sentiment")
     assert scoring.version() == "v0-sentiment"
     monkeypatch.setattr(scoring.settings, "scorer_mode", "event")

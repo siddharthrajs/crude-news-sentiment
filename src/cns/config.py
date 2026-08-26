@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     #: opinion rather than overwriting the first.
     scorer_mode: str = "sentiment"
 
+    #: Flip the sign of sentiment scores. Most oil-relevant news FinBERT reads
+    #: as negative (supply cuts, conflict, sanctions, outages) is bullish for
+    #: crude, so inverting corrects the common case -- but see the caveats in
+    #: scoring._score_sentiment for where it makes things worse.
+    scorer_invert: bool = True
+
     #: FinBERT supplies wording intensity only -- never direction. Needs the ml
     #: extra; without it the scorer runs on rules alone at lower confidence.
     finbert_enabled: bool = True

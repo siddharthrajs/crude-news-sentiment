@@ -72,7 +72,8 @@ def version() -> str:
     Derived from the mode as well as the configured version, so switching modes
     cannot silently mix two different scorers under one label.
     """
-    return f"{settings.scorer_version}-{settings.scorer_mode}"
+    suffix = "-inv" if (settings.scorer_mode == "sentiment" and settings.scorer_invert) else ""
+    return f"{settings.scorer_version}-{settings.scorer_mode}{suffix}"
 
 
 def is_available() -> bool:
@@ -121,13 +122,33 @@ def _finbert_probs(title: str) -> dict[str, float] | None:
 
 
 def _score_sentiment(title: str) -> Score | None:
-    """Net sentiment of the wording, scaled to +/-100."""
+    """Net sentiment of the wording, scaled to +/-100.
+
+    With `SCORER_INVERT` on, the sign is flipped. The reasoning is that most
+    oil-relevant news FinBERT reads as negative -- supply cuts, outages,
+    sanctions, conflict, blocked tankers -- is bullish for crude, and most it
+    reads as positive -- ceasefires, agreements, normalised shipping -- is
+    bearish. Inverting therefore fixes the common case.
+
+    It also breaks three cases, which no sign flip can fix:
+
+    * **Demand news.** "Global oil demand collapses" is negative *and* bearish;
+      inverting makes it bullish.
+    * **Inventory builds.** A build is bearish and often reads neutral-positive.
+    * **Explicit price headlines.** "Oil slides 3% on the session" is negative
+      and bearish. Inverting turns a report of a fall into a bullish signal.
+
+    The last one is the dangerous one, since price headlines are common and the
+    inversion is confidently wrong on every one of them.
+    """
     probs = _finbert_probs(title)
     if probs is None:
         log.warning("sentiment mode needs FinBERT; install the ml extra")
         return None
 
     net = probs["positive"] - probs["negative"]
+    if settings.scorer_invert:
+        net = -net
     # Neutral mass is the model saying "this wording carries no charge", which
     # is exactly how little the market should read into it.
     confidence = round(1.0 - probs["neutral"], 3)
@@ -140,6 +161,7 @@ def _score_sentiment(title: str) -> Score | None:
         event="sentiment",
         components={
             "mode": "sentiment",
+            "inverted": settings.scorer_invert,
             "finbert": {k: round(v, 4) for k, v in probs.items()},
             "net": round(net, 4),
         },

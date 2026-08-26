@@ -191,18 +191,35 @@ identical headlines.
 
 ### `sentiment` (default)
 
-FinBERT net sentiment: `P(positive) - P(negative)`, scaled to ±100. Confidence
-is the non-neutral mass. Judges the wording, nothing else.
+FinBERT net sentiment: `P(positive) - P(negative)`, scaled to +/-100, **sign
+flipped** when `SCORER_INVERT` is on (the default). Confidence is the
+non-neutral mass. Scores every headline - 44/44 on the live corpus.
 
-Scores **every** headline — 43/43 on the live corpus — because it reads language
-rather than matching a vocabulary.
+The flip is there because FinBERT judges tone, and for crude the tone is usually
+backwards: supply cuts, outages, sanctions, blocked tankers and war all sound
+negative and are bullish, while ceasefires, agreements and normalised shipping
+sound positive and are bearish.
 
-> **Inherent limitation:** sentiment is not price direction for commodities.
-> `Shipper MSC halts Russian Black Sea service after drone attack` scores
-> **-90.8 (bearish)** when a shipping halt is bullish for crude. Measured the
-> same way, FinBERT rates "OPEC announces deep cuts" negative at 0.85. This is
-> not tunable — it is what sentiment-only scoring means. Use `event` mode to
-> avoid it.
+Measured over 18 headlines with unambiguous direction
+(`scripts/eval_inversion.py`):
+
+| | plain FinBERT | inverted |
+|---|---|---|
+| Overall | 6/18 (33%) | **11/18 (61%)** |
+| Supply / risk headlines | 0/12 | **11/12** |
+| Demand / price headlines | **6/6** | 0/6 |
+
+> **What the flip costs.** It is exactly wrong wherever tone and price already
+> agree, and no sign flip can fix that:
+> - **Demand news** - "Global oil demand collapses" is negative *and* bearish.
+> - **Inventory builds** - bearish, and often read as neutral-positive.
+> - **Explicit price headlines** - "Brent tumbles below $60" reports a fall, and
+>   inverting turns it into a bullish signal. This is the dangerous one, since
+>   price headlines are common and the inversion is confidently wrong on all of
+>   them.
+>
+> Set `SCORER_INVERT=false` for plain sentiment, or use `event` mode, which takes
+> direction from the event and is not exposed to this at all.
 
 ### `event`
 
