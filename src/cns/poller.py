@@ -3,10 +3,8 @@
 Delivery happens inline, as each new headline is processed, rather than a
 separate job sweeping the database for unsent rows.
 
-The one wrinkle is ordering. The Teams payload carries the headline's `id`,
-which only exists once the row is in the database, so each row is `flush()`ed
-first -- staged inside the transaction but not yet durable -- then delivered,
-then committed. The durable write still lands after delivery.
+The card is built from the headline itself and needs no database id, so
+delivery happens before the row is written at all -- no flush, no staged state.
 
 Each headline is committed on its own rather than batching the poll, so an
 interruption mid-poll cannot leave delivered headlines unsaved. The residual
@@ -94,13 +92,12 @@ def _insert_new(session, items: list[financial_juice.FeedItem]) -> tuple[int, in
             category=category,
             relevance_terms=terms,
         )
-        session.add(headline)
-        session.flush()  # assigns id for the payload; not durable yet
-
+        # Teams first, then the database -- the card needs nothing from the row.
         if _deliver(headline):
             headline.notified_at = utcnow()
             delivered += 1
 
+        session.add(headline)
         session.commit()
         stored += 1
     return stored, filtered, delivered

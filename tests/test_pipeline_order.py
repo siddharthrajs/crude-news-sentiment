@@ -5,7 +5,7 @@ send, so what is pinned here is the ordering and the failure behaviour.
 """
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
 from cns import notify, poller
@@ -24,6 +24,11 @@ def item(n, title):
     )
 
 
+def texts(payload):
+    body = payload["attachments"][0]["content"]["body"]
+    return [b.get("text", "") for b in body]
+
+
 @pytest.fixture
 def session(monkeypatch):
     engine = create_engine("sqlite://")
@@ -36,25 +41,17 @@ def session(monkeypatch):
 
 @pytest.fixture
 def teams(monkeypatch):
-    """Capture Teams posts and record whether the row existed at send time."""
     sent = []
-
-    monkeypatch.setattr(notify, "is_configured", lambda: True)
     monkeypatch.setattr(poller.notify, "is_configured", lambda: True)
-
-    def fake_post(payload):
-        sent.append(payload)
-
-    monkeypatch.setattr(poller.notify, "post", fake_post)
+    monkeypatch.setattr(poller.notify, "post", sent.append)
     return sent
 
 
 def test_relevant_headlines_are_delivered_during_the_poll(session, teams):
-    stored, filtered, delivered = poller._insert_new(
-        session, [item(1, OIL), item(2, GEO)]
-    )
+    stored, filtered, delivered = poller._insert_new(session, [item(1, OIL), item(2, GEO)])
     assert delivered == 2
-    assert [p["headline"] for p in teams] == [OIL, GEO]
+    assert OIL in texts(teams[0])
+    assert GEO in texts(teams[1])
 
 
 def test_irrelevant_headlines_are_stored_but_not_sent(session, teams):
@@ -64,11 +61,16 @@ def test_irrelevant_headlines_are_stored_but_not_sent(session, teams):
     assert session.scalar(select(Headline).where(Headline.external_id == "1")) is not None
 
 
-def test_headline_id_is_available_to_the_payload(session, teams):
-    """The row is flushed before delivery so the payload can carry its id."""
+def test_delivery_happens_before_the_row_is_written(session, monkeypatch):
+    """Teams first, then the database -- the card needs nothing from the row."""
+    rows_at_send = []
+    monkeypatch.setattr(poller.notify, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        poller.notify, "post",
+        lambda payload: rows_at_send.append(session.scalar(select(func.count(Headline.id)))),
+    )
     poller._insert_new(session, [item(1, GEO)])
-    assert teams[0]["headline_id"] is not None
-    assert teams[0]["headline_id"] > 0
+    assert rows_at_send == [0]
 
 
 def test_delivery_is_recorded_on_the_saved_row(session, teams):
@@ -124,7 +126,7 @@ def test_already_seen_headlines_are_neither_stored_nor_resent(session, teams):
     assert len(teams) == 1
 
 
-def test_scorer_result_reaches_the_payload(session, teams, monkeypatch):
+def test_scorer_result_reaches_the_card(session, teams, monkeypatch):
     """The seam CrudeBERT will fill: score() output must land in the message."""
     from cns.scoring import Score
 
@@ -133,16 +135,10 @@ def test_scorer_result_reaches_the_payload(session, teams, monkeypatch):
         lambda h: Score(value=72.0, direction="bullish", confidence=0.8, event="supply_down"),
     )
     poller._insert_new(session, [item(1, GEO)])
-
-    payload = teams[0]
-    assert payload["score"] == 72.0
-    assert payload["direction"] == "bullish"
-    assert payload["confidence"] == 0.8
-    assert payload["event"] == "supply_down"
-    assert "BULLISH +72" in payload["text"]
+    assert "BULLISH  +72" in texts(teams[0])
 
 
-def test_unscored_headlines_send_null_not_zero(session, teams):
-    """Null means "not scored" and must stay distinct from a neutral 0."""
+def test_unscored_headlines_show_no_score_at_all(session, teams):
+    """Absent means "not scored", which must not look like a neutral 0."""
     poller._insert_new(session, [item(1, GEO)])
-    assert teams[0]["score"] is None
+    assert not [t for t in texts(teams[0]) if "BULLISH" in t or "BEARISH" in t]

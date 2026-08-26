@@ -99,42 +99,90 @@ def _bearer_token() -> str | None:
     return _token
 
 
-def build_payload(headline, score=None, index=None) -> dict:
-    """Build the JSON body posted to the flow.
+#: Direction -> Adaptive Card colour. Teams accepts only this fixed vocabulary.
+_DIRECTION_COLOUR = {"bullish": "Good", "bearish": "Attention", "neutral": "Default"}
 
-    Sends a pre-rendered `text` alongside the structured fields, so the flow
-    works whether it posts `text` straight through or builds its own card from
-    the parts. Score fields are present but null until the scorer exists, so the
-    flow's shape does not have to change when it lands.
+_CATEGORY_LABEL = {"oil_direct": "Crude oil", "geo_risk": "Geopolitics"}
+
+
+def build_payload(headline, score=None, index=None) -> dict:
+    """Build the Adaptive Card posted to the flow.
+
+    The Workflows "post a card when a webhook request is received" template only
+    accepts an Adaptive Card or MessageCard envelope -- a plain {"text": ...}
+    body is accepted by the trigger (202) and then fails the run. So the payload
+    is the card itself, and the flow is a dumb pipe.
     """
     terms = headline.relevance_terms.split(",") if headline.relevance_terms else []
-    label = "Crude oil" if headline.category == "oil_direct" else "Geopolitics"
+    label = _CATEGORY_LABEL.get(headline.category, headline.category)
 
-    lines = [f"**{label}** · {headline.title}"]
-    if score:
-        lines.append(f"**{score.direction.upper()} {score.value:+.0f}** (confidence {score.confidence:.0%})")
+    body = [
+        {
+            "type": "TextBlock",
+            "text": label.upper(),
+            "weight": "Bolder",
+            "size": "Small",
+            "color": "Accent",
+            "spacing": "None",
+        },
+        {
+            "type": "TextBlock",
+            "text": headline.title,
+            "wrap": True,
+            "size": "Medium",
+            "weight": "Bolder",
+        },
+    ]
+
+    if score is not None:
+        body.append(
+            {
+                "type": "TextBlock",
+                "text": f"{score.direction.upper()}  {score.value:+.0f}",
+                "weight": "Bolder",
+                "size": "Large",
+                "color": _DIRECTION_COLOUR.get(score.direction, "Default"),
+                "spacing": "Small",
+            }
+        )
+
+    facts = []
+    if score is not None:
+        facts.append({"title": "Confidence", "value": f"{score.confidence:.0%}"})
+        if score.event:
+            facts.append({"title": "Event", "value": score.event})
+    if index is not None:
+        facts.append({"title": "7-day index", "value": f"{index:+.1f}"})
     if terms:
-        lines.append(f"_matched: {', '.join(terms[:6])}_")
+        facts.append({"title": "Matched", "value": ", ".join(terms[:6])})
+    if headline.published_at is not None:
+        facts.append(
+            {"title": "Published", "value": headline.published_at.strftime("%Y-%m-%d %H:%M UTC")}
+        )
+    if facts:
+        body.append({"type": "FactSet", "facts": facts, "spacing": "Small"})
+
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.4",
+        "body": body,
+    }
+    # Action.OpenUrl rejects a null url, which fails the whole card.
     if headline.link:
-        lines.append(headline.link)
+        card["actions"] = [
+            {"type": "Action.OpenUrl", "title": "Read on FinancialJuice", "url": headline.link}
+        ]
 
     return {
-        "text": "\n".join(lines),
-        "headline": headline.title,
-        "category": headline.category,
-        "label": label,
-        "matched_terms": terms,
-        "url": headline.link,
-        "published_at": headline.published_at.isoformat() if headline.published_at else None,
-        "headline_id": headline.id,
-        # Null until the scorer lands, so the flow can be built against the
-        # final shape now. Null means "not scored", which is deliberately not
-        # the same as a neutral 0.
-        "score": score.value if score else None,
-        "direction": score.direction if score else None,
-        "confidence": score.confidence if score else None,
-        "event": score.event if score else None,
-        "market_index": index,
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "contentUrl": None,
+                "content": card,
+            }
+        ],
     }
 
 

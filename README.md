@@ -238,23 +238,34 @@ surfaced.
 
 ### Payload
 
-The flow receives a pre-rendered `text` plus structured fields, so it works
-whether it posts the text straight through or builds its own Adaptive Card:
+The Workflows template **only accepts an Adaptive Card or MessageCard envelope**.
+A plain `{"text": ...}` body is accepted by the trigger with a 202 and then
+fails the run, which is a confusing way to find this out. So the payload is the
+card itself and the flow is a dumb pipe:
 
 ```json
 {
-  "text": "**Geopolitics** · Iran and Oman aim for a permanent Hormuz route…",
-  "headline": "Iran and Oman aim for a permanent Hormuz route in 60 days",
-  "category": "geo_risk",
-  "matched_terms": ["hormuz", "iran"],
-  "url": "https://www.financialjuice.com/News/…",
-  "score": null, "direction": null, "confidence": null
+  "type": "message",
+  "attachments": [{
+    "contentType": "application/vnd.microsoft.card.adaptive",
+    "content": {
+      "type": "AdaptiveCard", "version": "1.4",
+      "body": [
+        {"type": "TextBlock", "text": "GEOPOLITICS", "color": "Accent"},
+        {"type": "TextBlock", "text": "Iran threatens to close the Strait of Hormuz"},
+        {"type": "TextBlock", "text": "BULLISH  +72", "color": "Good"},
+        {"type": "FactSet", "facts": [{"title": "Confidence", "value": "80%"}]}
+      ],
+      "actions": [{"type": "Action.OpenUrl", "url": "https://..."}]
+    }
+  }]
 }
 ```
 
-`score`, `direction` and `confidence` are null until the scorer lands. They are
-sent now so the flow can be built against the final shape and will not need
-changing later.
+The score block and its facts are simply absent until the scorer lands — not
+rendered as a neutral zero, which would be indistinguishable from a real neutral
+reading. `Action.OpenUrl` is omitted entirely when a headline has no link, since
+a null url invalidates the whole card.
 
 ## The market index
 
