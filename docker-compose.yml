@@ -1,11 +1,20 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        # 1 includes the zero-shot model (~2GB image, ~2GB RAM at runtime).
+        INSTALL_ML: ${INSTALL_ML:-0}
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://cns:${POSTGRES_PASSWORD}@db:5432/cns
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-90}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ZEROSHOT_ENABLED: ${ZEROSHOT_ENABLED:-false}
+      # Cache weights on a volume so redeploys do not re-download 1.6GB.
+      HF_HOME: /app/data/hf
+    volumes:
+      - modelcache:/app/data/hf
     ports:
       - "8000:8000"
     depends_on:
@@ -29,3 +38,4 @@ services:
 
 volumes:
   pgdata:
+  modelcache:

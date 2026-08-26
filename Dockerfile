@@ -6,9 +6,18 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# Zero-shot relevance is opt-in: torch adds ~2GB to the image and is not
+# needed to run the pipeline. Build with --build-arg INSTALL_ML=1 to include it.
+ARG INSTALL_ML=0
+
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN pip install --no-cache-dir . && \
+RUN if [ "$INSTALL_ML" = "1" ]; then \
+        pip install --no-cache-dir ".[ml]" \
+            --extra-index-url https://download.pytorch.org/whl/cpu; \
+    else \
+        pip install --no-cache-dir . ; \
+    fi && \
     useradd --create-home --uid 10001 appuser && \
     mkdir -p /app/data && chown -R appuser /app/data
 USER appuser
