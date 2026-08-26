@@ -126,19 +126,22 @@ def test_already_seen_headlines_are_neither_stored_nor_resent(session, teams):
     assert len(teams) == 1
 
 
-def test_scorer_result_reaches_the_card(session, teams, monkeypatch):
-    """The seam CrudeBERT will fill: score() output must land in the message."""
+def test_scorer_is_called_for_relevant_headlines(session, teams, monkeypatch):
+    """The seam CrudeBERT will fill. The card does not render the score yet,
+    but the pipeline must still be reaching the scorer."""
     from cns.scoring import Score
 
-    monkeypatch.setattr(
-        poller.scoring, "score",
-        lambda h: Score(value=72.0, direction="bullish", confidence=0.8, event="supply_down"),
-    )
-    poller._insert_new(session, [item(1, GEO)])
-    assert "BULLISH  +72" in texts(teams[0])
+    scored = []
+
+    def fake_score(headline):
+        scored.append(headline.title)
+        return Score(value=72.0, direction="bullish", confidence=0.8)
+
+    monkeypatch.setattr(poller.scoring, "score", fake_score)
+    poller._insert_new(session, [item(1, GEO), item(2, NOISE)])
+    assert scored == [GEO]
 
 
-def test_unscored_headlines_show_no_score_at_all(session, teams):
-    """Absent means "not scored", which must not look like a neutral 0."""
+def test_card_carries_only_the_sender_line_and_headline(session, teams):
     poller._insert_new(session, [item(1, GEO)])
-    assert not [t for t in texts(teams[0]) if "BULLISH" in t or "BEARISH" in t]
+    assert texts(teams[0]) == ["_Siddharth Raj:_", GEO]

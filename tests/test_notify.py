@@ -26,13 +26,6 @@ def texts(payload):
     return [b.get("text", "") for b in card_of(payload)["body"]]
 
 
-def facts(payload):
-    for block in card_of(payload)["body"]:
-        if block["type"] == "FactSet":
-            return {f["title"]: f["value"] for f in block["facts"]}
-    return {}
-
-
 @pytest.fixture
 def webhook(monkeypatch):
     monkeypatch.setattr(notify.settings, "teams_webhook_url", "https://flow.invalid/hook")
@@ -77,60 +70,49 @@ def test_payload_is_an_adaptive_card_envelope():
     assert card_of(payload)["type"] == "AdaptiveCard"
 
 
-def test_card_shows_headline_category_and_terms():
-    payload = notify.build_payload(FakeHeadline())
-    assert FakeHeadline.title in texts(payload)
-    assert "GEOPOLITICS" in texts(payload)
-    assert facts(payload)["Matched"] == "hormuz, iran, strait"
+def test_card_is_a_sender_line_and_the_headline():
+    body = card_of(notify.build_payload(FakeHeadline()))["body"]
+    assert len(body) == 2
+    assert body[0]["text"] == "_Siddharth Raj:_"
+    assert body[1]["text"] == FakeHeadline.title
 
 
-def test_oil_and_geo_get_different_labels():
-    oil = FakeHeadline()
-    oil.category = "oil_direct"
-    assert "GEOPOLITICS" in texts(notify.build_payload(FakeHeadline()))
-    assert "CRUDE OIL" in texts(notify.build_payload(oil))
+def test_sender_line_is_grey_and_italic():
+    """isSubtle greys it; the underscores are markdown italics."""
+    sender = card_of(notify.build_payload(FakeHeadline()))["body"][0]
+    assert sender["isSubtle"] is True
+    assert sender["text"].startswith("_") and sender["text"].endswith("_")
 
 
-def test_link_becomes_an_open_url_action():
-    action = card_of(notify.build_payload(FakeHeadline()))["actions"][0]
-    assert action["type"] == "Action.OpenUrl"
-    assert action["url"] == FakeHeadline.link
+def test_headline_wraps():
+    """Headlines run long; without wrap they are truncated in the chat."""
+    for block in card_of(notify.build_payload(FakeHeadline()))["body"]:
+        assert block["wrap"] is True
 
 
-def test_missing_link_omits_actions_entirely():
-    """Action.OpenUrl with a null url invalidates the whole card."""
+def test_no_button_no_category_no_facts():
+    card = card_of(notify.build_payload(FakeHeadline()))
+    assert "actions" not in card
+    assert not [b for b in card["body"] if b["type"] == "FactSet"]
+    assert "GEOPOLITICS" not in texts(notify.build_payload(FakeHeadline()))
+
+
+def test_score_is_accepted_but_not_rendered():
+    """The signature stays stable for the pipeline; the card shows nothing.
+
+    Once CrudeBERT lands the score will need somewhere to go.
+    """
+    payload = notify.build_payload(
+        FakeHeadline(), score=Score(72.0, "bullish", 0.8, "supply_down"), index=24.2
+    )
+    assert len(card_of(payload)["body"]) == 2
+    assert not [t for t in texts(payload) if "BULLISH" in t or "72" in t]
+
+
+def test_headline_without_a_link_is_unaffected():
     headline = FakeHeadline()
     headline.link = None
-    assert "actions" not in card_of(notify.build_payload(headline))
-
-
-def test_unscored_card_carries_no_score():
-    """Absent must not be renderable as a neutral zero."""
-    payload = notify.build_payload(FakeHeadline())
-    assert "Confidence" not in facts(payload)
-    assert not [t for t in texts(payload) if "BULLISH" in t or "BEARISH" in t]
-
-
-def test_scored_card_shows_direction_and_colour():
-    payload = notify.build_payload(
-        FakeHeadline(), score=Score(72.0, "bullish", 0.8, "supply_down")
-    )
-    assert "BULLISH  +72" in texts(payload)
-    blocks = {b.get("text"): b for b in card_of(payload)["body"] if b["type"] == "TextBlock"}
-    assert blocks["BULLISH  +72"]["color"] == "Good"
-    assert facts(payload)["Confidence"] == "80%"
-    assert facts(payload)["Event"] == "supply_down"
-
-
-def test_bearish_scores_use_the_warning_colour():
-    payload = notify.build_payload(FakeHeadline(), score=Score(-60.0, "bearish", 0.7))
-    blocks = {b.get("text"): b for b in card_of(payload)["body"] if b["type"] == "TextBlock"}
-    assert blocks["BEARISH  -60"]["color"] == "Attention"
-
-
-def test_market_index_is_shown_when_supplied():
-    payload = notify.build_payload(FakeHeadline(), index=24.2)
-    assert facts(payload)["7-day index"] == "+24.2"
+    assert len(card_of(notify.build_payload(headline))["body"]) == 2
 
 
 # --- transport ------------------------------------------------------------

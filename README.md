@@ -241,7 +241,9 @@ surfaced.
 The Workflows template **only accepts an Adaptive Card or MessageCard envelope**.
 A plain `{"text": ...}` body is accepted by the trigger with a 202 and then
 fails the run, which is a confusing way to find this out. So the payload is the
-card itself and the flow is a dumb pipe:
+card itself and the flow is a dumb pipe.
+
+The card is deliberately minimal — a grey italic sender line, then the headline:
 
 ```json
 {
@@ -251,21 +253,21 @@ card itself and the flow is a dumb pipe:
     "content": {
       "type": "AdaptiveCard", "version": "1.4",
       "body": [
-        {"type": "TextBlock", "text": "GEOPOLITICS", "color": "Accent"},
-        {"type": "TextBlock", "text": "Iran threatens to close the Strait of Hormuz"},
-        {"type": "TextBlock", "text": "BULLISH  +72", "color": "Good"},
-        {"type": "FactSet", "facts": [{"title": "Confidence", "value": "80%"}]}
-      ],
-      "actions": [{"type": "Action.OpenUrl", "url": "https://..."}]
+        {"type": "TextBlock", "text": "_Siddharth Raj:_", "isSubtle": true, "wrap": true},
+        {"type": "TextBlock", "text": "Trump: A lot of oil is pouring out of Hormuz", "wrap": true}
+      ]
     }
   }]
 }
 ```
 
-The score block and its facts are simply absent until the scorer lands — not
-rendered as a neutral zero, which would be indistinguishable from a real neutral
-reading. `Action.OpenUrl` is omitted entirely when a headline has no link, since
-a null url invalidates the whole card.
+`isSubtle` greys the sender line; the underscores are markdown italics, which
+`TextBlock` renders. Both blocks set `wrap` — headlines run long and are
+truncated without it.
+
+`build_payload` still accepts `score` and `index` so the pipeline call signature
+stays stable, but the card renders neither. **Open question:** once CrudeBERT
+lands, the score needs somewhere to go and this card has no room for it.
 
 ## The market index
 
