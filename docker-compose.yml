@@ -3,39 +3,28 @@ services:
     build:
       context: .
       args:
-        # 1 includes the zero-shot model (~2GB image, ~2GB RAM at runtime).
-        INSTALL_ML: ${INSTALL_ML:-0}
+        # Torch, for FinBERT and the zero-shot model (~2GB image, ~2GB RAM).
+        # 0 builds a much smaller image that cannot run the sentiment scorer.
+        INSTALL_ML: ${INSTALL_ML:-1}
     restart: unless-stopped
+    # Everything the app reads (TEAMS_*, DB_SCHEMA, SCORER_*, FEED_URL) comes
+    # through here, so the container sees exactly what is set on the host or in
+    # Coolify. Optional, so a checkout without a .env still builds -- the app
+    # falls back to the defaults in cns.config.
+    env_file:
+      - path: .env
+        required: false
     environment:
-      DATABASE_URL: postgresql+psycopg://cns:${POSTGRES_PASSWORD}@db:5432/cns
-      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-90}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      ZEROSHOT_ENABLED: ${ZEROSHOT_ENABLED:-false}
+      # No Postgres ships with this stack: point it at the instance that holds
+      # the corpus. Unset fails the deploy rather than silently falling back to
+      # SQLite inside the container, where the data would vanish on redeploy.
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL to the Postgres instance}
       # Cache weights on a volume so redeploys do not re-download 1.6GB.
       HF_HOME: /app/data/hf
     volumes:
       - modelcache:/app/data/hf
     ports:
       - "8000:8000"
-    depends_on:
-      db:
-        condition: service_healthy
-
-  db:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: cns
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: cns
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cns -d cns"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
 volumes:
-  pgdata:
   modelcache:

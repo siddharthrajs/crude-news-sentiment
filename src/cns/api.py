@@ -42,6 +42,13 @@ async def lifespan(app: FastAPI):
             log.info("zero-shot second opinion enabled (%s)", settings.zeroshot_model)
         else:
             log.warning("ZEROSHOT_ENABLED is set but torch/transformers are missing; skipping")
+    if settings.scorer_mode == "sentiment" and not scoring.is_available():
+        # Silent otherwise: the scorer returns None per headline, so the
+        # pipeline still polls, stores and delivers -- with nothing scored.
+        log.error(
+            "SCORER_MODE=sentiment needs FinBERT, but torch/transformers are "
+            "missing; every headline will go unscored. Rebuild with INSTALL_ML=1."
+        )
     if notify.is_configured():
         # No scheduled job: delivery happens inline in the poll, as each new
         # headline is processed. See cns.poller.
@@ -55,8 +62,15 @@ async def lifespan(app: FastAPI):
         coalesce=True,
     )
     scheduler.start()
+    # Scheduled rather than called directly: uvicorn serves no request -- not
+    # even /health -- until lifespan startup returns, and the first poll also
+    # loads FinBERT, downloading ~450MB on a cold cache. Blocking here fails
+    # the container healthcheck and gets us restarted mid-download, which
+    # starts the download over. A `date` trigger with no run_date fires
+    # immediately, on a scheduler thread, so we still get a first sample
+    # without waiting a full interval.
+    scheduler.add_job(poll_safe, "date", id="initial_poll")
     log.info("poller started (every %ss, db=%s)", settings.poll_interval_seconds, db_label())
-    poll_safe()  # don't wait a full interval for the first sample
     try:
         yield
     finally:
