@@ -51,13 +51,13 @@ def _screen(title: str) -> tuple[str, str | None, str, str | None] | None:
     return kind, kind_rule, category, ",".join(terms) or None
 
 
-def _insert_new(session, items: list[financial_juice.FeedItem]) -> tuple[int, int]:
+def _insert_new(session, items: list[financial_juice.FeedItem]) -> tuple[int, int, int]:
     """Insert items we have not seen before, keyed on (source, external_id).
 
-    Returns ``(stored, filtered)``.
+    Returns ``(stored, filtered, delivered)``.
     """
     if not items:
-        return 0, 0
+        return 0, 0, 0
 
     ids = [item.external_id for item in items]
     known = set(

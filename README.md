@@ -473,21 +473,69 @@ Note for stage 6: in those price tables `datetime` is already **UTC** (it matche
 `datetime_ts` exactly), and `gmt_offset` is exchange metadata that is *not*
 applied to it. Headlines are stored as naive UTC, so the two join directly.
 
+## Live headlines for downstream consumers
+
+`init_db()` installs a trigger, `headlines_notify`, that fires
+`pg_notify('cns_headline', <id>)` on every stored headline that is `narrative`
+and not `irrelevant`. A dashboard holding `LISTEN cns_headline` is woken the
+moment a headline commits, instead of polling this database on a timer.
+
+The payload is the row id alone. A headline's score is written to
+`headline_scores` later in the same transaction, and NOTIFY is delivered at
+COMMIT, so a listener that re-queries on wake always sees the two together --
+a payload built at insert time would carry the headline without its score.
+
+Consumers should re-query `id > last_seen` rather than the notified id. NOTIFY
+is fire-and-forget with no queue, so that one choice also covers bursts and the
+catch-up after a dropped connection. Two more things a consumer has to get
+right, both of which are silent when wrong:
+
+* Filter on `scorer_version`. `headline_scores` retains every version ever run,
+  so an unfiltered join returns a headline once per version.
+* `LEFT JOIN` the scores. A headline the scorer could not read has no score row
+  at all, which is deliberately distinct from one scored as neutral.
+
+Installing the trigger is best-effort: a database user without rights to create
+functions gets a warning and a working pipeline, not a refusal to start.
+
 ## Deploying to Coolify
 
-Create a **Docker Compose** resource pointing at this repo. Set environment variables:
+Create a **Docker Compose** resource pointing at this repo. No Postgres ships
+with the stack -- `DATABASE_URL` must point at an existing instance, and compose
+refuses to start without it rather than falling back to SQLite inside the
+container, where the data would not survive a redeploy.
+
+Set the environment variables *before* the first deploy. Compose interpolates
+`DATABASE_URL` when the resource is parsed, so a missing value fails at save
+time, not at container start. The service reads `.env` through `env_file`, so
+every setting in `.env.example` reaches the container without needing its own
+line in `docker-compose.yml`.
 
 | Variable | Notes |
 |---|---|
-| `POSTGRES_PASSWORD` | required |
-| `POLL_INTERVAL_SECONDS` | defaults to `90` |
+| `DATABASE_URL` | required; `postgresql+psycopg://user:pass@host:5432/dbname` |
+| `DB_SCHEMA` | defaults to `cns` |
+| `SCORER_VERSION` | must match the version the stored scores were written under, or `/index` reads an empty history |
+| `TEAMS_ENABLED`, `TEAMS_WEBHOOK_URL` | delivery is off without both |
+| `POLL_INTERVAL_SECONDS` | defaults to `61`; see the rate limit note in `sources/financial_juice.py` |
 | `LOG_LEVEL` | defaults to `INFO` |
 
-To use an existing Postgres instead of the bundled one, set `DATABASE_URL` to
-`postgresql+psycopg://user:pass@host:5432/dbname` and drop the `db` service.
-Otherwise `DATABASE_URL` is wired to the `db` service by compose. Point Coolify's healthcheck
-at `/health`; it reports `degraded` only when the last three polls all failed, so a
-single transient 429 will not restart the container.
+Leave `API_PORT` at `8000`. The image's healthcheck and published port are both
+8000, so changing it makes the container permanently unhealthy.
+
+`INSTALL_ML` is a **build** arg, not runtime config, and defaults to `1`. Setting
+it as an ordinary Coolify environment variable has no effect on the image -- it
+has to be flagged as a build variable. With torch absent, `SCORER_MODE=sentiment`
+scores nothing at all; the app logs an error on startup saying so.
+
+Point Coolify's healthcheck at `/health`; it reports `degraded` only when the
+last three polls all failed, so a single transient 429 will not restart the
+container. The first poll runs as a scheduled job rather than inline, so the app
+answers `/health` immediately while FinBERT loads behind it -- on a cold cache
+that download is ~450MB into the `modelcache` volume, and blocking startup on it
+would trip the healthcheck and restart the container mid-download.
+
+Budget ~3GB of disk for the image and ~2GB of RAM at runtime for torch.
 
 **Run exactly one instance.** The rate limit is per IP and the poller assumes it is
 the only writer — two replicas would 429 each other continuously.

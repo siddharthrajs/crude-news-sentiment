@@ -232,7 +232,7 @@ def send_pending(limit: int | None = None, dry_run: bool = False) -> DeliveryRes
         for headline in pending:
             payload = build_payload(headline)
             if dry_run:
-                log.info("[dry-run] would post: %s", payload["text"].replace("\n", " | "))
+                log.info("[dry-run] would post: %s", headline.title)
                 sent += 1
                 continue
             try:

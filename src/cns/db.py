@@ -1,3 +1,4 @@
+import logging
 import os
 from urllib.parse import urlparse
 
@@ -6,6 +7,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .config import settings
 from .models import Base
+
+log = logging.getLogger(__name__)
 
 
 def normalize_url(url: str) -> str:
@@ -79,12 +82,76 @@ def _apply_additive_migrations() -> None:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
 
+#: Channel a downstream consumer holds `LISTEN` on to be woken the moment a
+#: headline commits, instead of polling this database on a timer.
+NOTIFY_CHANNEL = "cns_headline"
+
+
+def _apply_notify_trigger() -> None:
+    """Install the trigger that pushes new headlines to `LISTEN` consumers.
+
+    The payload is the row id alone. A headline's score is inserted later in
+    the same transaction, and NOTIFY is delivered at COMMIT, so a listener that
+    re-queries on wake always sees the two together -- whereas a payload built
+    at insert time would carry the headline without its score. It also keeps us
+    clear of pg_notify's 8000-byte payload limit.
+
+    Postgres only, and best-effort: the pipeline itself does not consume this,
+    so a database user without rights to create functions should still get a
+    working pipeline rather than a refusal to start.
+    """
+    if not IS_POSTGRES:
+        return
+    schema = SCHEMA or "public"
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(f'''
+                CREATE OR REPLACE FUNCTION "{schema}".notify_headline()
+                RETURNS trigger AS $$
+                BEGIN
+                  PERFORM pg_notify('{NOTIFY_CHANNEL}', NEW.id::text);
+                  RETURN NULL;
+                END;
+                $$ LANGUAGE plpgsql
+            '''))
+            # Created only when absent rather than dropped and recreated: DROP
+            # TRIGGER takes an ACCESS EXCLUSIVE lock on `headlines`, and this
+            # runs on every startup.
+            exists = conn.execute(
+                text(
+                    "SELECT 1 FROM pg_trigger t "
+                    "JOIN pg_class c ON c.oid = t.tgrelid "
+                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE n.nspname = :schema AND c.relname = 'headlines' "
+                    "AND t.tgname = 'headlines_notify'"
+                ),
+                {"schema": schema},
+            ).first()
+            if not exists:
+                # The WHEN clause filters at the source, so consumers are not
+                # woken for calendar entries, widgets or irrelevant headlines.
+                conn.execute(text(f'''
+                    CREATE TRIGGER headlines_notify
+                    AFTER INSERT ON "{schema}".headlines
+                    FOR EACH ROW
+                    WHEN (NEW.kind = 'narrative' AND NEW.category <> 'irrelevant')
+                    EXECUTE FUNCTION "{schema}".notify_headline()
+                '''))
+    except Exception:
+        log.warning(
+            "could not install the %s notify trigger; the pipeline is "
+            "unaffected, but consumers listening for live headlines will not "
+            "be woken", NOTIFY_CHANNEL, exc_info=True,
+        )
+
+
 def init_db() -> None:
     if SCHEMA:
         with engine.begin() as conn:
             conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
     Base.metadata.create_all(engine)
     _apply_additive_migrations()
+    _apply_notify_trigger()
 
 
 def db_label() -> str:

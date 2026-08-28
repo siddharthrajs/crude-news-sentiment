@@ -163,3 +163,15 @@ def test_score_is_persisted_alongside_the_headline(session, teams, monkeypatch):
     assert row.score == 72.0
     assert row.label == "bullish"
     assert row.headline_id is not None
+
+
+def test_empty_feed_unpacks_like_every_other_path(session, teams):
+    """A successful fetch that yields no items must still return three counts.
+
+    The feed exposes a 100-item window behind Cloudflare, so a challenge page
+    is a 200 that parses to zero entries. Returning a short tuple here raised
+    on unpack inside poll_once, which swallowed the error and skipped writing
+    the PollRun row -- leaving /health reporting on stale polls.
+    """
+    stored, filtered, delivered = poller._insert_new(session, [])
+    assert (stored, filtered, delivered) == (0, 0, 0)
