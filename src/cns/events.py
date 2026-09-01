@@ -63,6 +63,13 @@ _DEMAND_NOUN = _p(
     r"appetite", r"runs?", r"throughput",
 )
 
+#: The strategic reserve, which behaves as supply on the way out and as demand
+#: on the way in. Nothing else in the inventory vocabulary is asymmetric.
+_SPR = _p(
+    r"spr", r"strategic petroleum reserves?", r"strategic reserves?",
+    r"strategic national reserves?", r"strategic stockpiles?",
+)
+
 _DECREASE = _p(
     r"cuts?", r"cutting", r"slash\w*", r"reduc\w+", r"lower\w*", r"curb\w*",
     r"halt\w*", r"suspend\w*", r"stop\w*", r"shut\w*", r"disrupt\w+",
@@ -78,6 +85,15 @@ _INCREASE = _p(
     r"hik\w+", r"expand\w+", r"ramp\w*", r"surg\w+", r"jump\w*", r"climb\w+",
     r"lift\w*", r"add\w*", r"builds?", r"building", r"glut", r"surplus\w*",
     r"flood\w*", r"record high", r"more than expected", r"restart\w*", r"resum\w+",
+    r"replenish\w*", r"refill\w*", r"top\w* up", r"stockpil\w+",
+    # Releasing from storage and tapping a reserve both put barrels on the
+    # market, so they belong with the increases even though the words are
+    # not obviously about growth.
+    r"releas\w+", r"tapp?(?:s|ed|ing)?", r"draw\w* down", r"drawdowns?",
+    # Capacity coming back is supply returning to the market. Needs a supply
+    # noun alongside to fire, so "Iran returns to negotiations" is unaffected.
+    r"returns?", r"returned", r"returning", r"back online", r"restor\w+",
+    r"full capacity", r"normal levels?",
 )
 
 #: Geopolitical threat to supply. Bullish without touching a supply noun.
@@ -180,21 +196,58 @@ def classify(title: str) -> Event:
     matched: list[str] = []
     kind = UNKNOWN
 
-    # Inventories first: a build is bearish even though "rising" sounds good,
-    # and a draw is bullish. Reading them as plain supply gets both backwards.
-    if _INVENTORY_NOUN.search(text) and (increase or decrease):
-        kind = SUPPLY_UP if increase else SUPPLY_DOWN
-        matched.append("inventory_build" if increase else "inventory_draw")
-    elif _DEMAND_NOUN.search(text) and (increase or decrease):
-        kind = DEMAND_UP if increase else DEMAND_DOWN
-        matched.append("demand")
-    elif _SUPPLY_NOUN.search(text) and (increase or decrease):
-        kind = SUPPLY_DOWN if decrease else SUPPLY_UP
-        matched.append("supply")
-    elif _RISK_DOWN.search(text):
+    # Which quantity is moving? A headline often names more than one --
+    # "Russia's gasoline output fell to about 70% of domestic consumption"
+    # carries both a supply noun and a demand noun -- so the earliest one wins.
+    # In wire copy the subject leads, and taking them in a fixed order instead
+    # read that headline as falling demand and inverted its sign at confidence
+    # 0.98, when it is a supply loss and bullish.
+    #
+    # Inventories keep their tie-break priority: a build is bearish even though
+    # "rising" sounds good, and a draw is bullish, so reading a stock report as
+    # plain supply gets both backwards.
+    if increase or decrease:
+        # In a price report "barrel" is the unit, not the subject: "Brent crude
+        # tumbles below $60 a barrel" is not a supply cut. `_SUPPLY_EVENT_NOUN`
+        # is the same list with the price units removed, and switching to it
+        # whenever a price marker is present keeps that headline out of the
+        # supply branch entirely.
+        supply_noun = (
+            _SUPPLY_EVENT_NOUN if _PRICE_MARKER.search(text) else _SUPPLY_NOUN
+        )
+        subjects = []
+        for noun, name in (
+            (_INVENTORY_NOUN, "inventory"),
+            (_DEMAND_NOUN, "demand"),
+            (supply_noun, "supply"),
+        ):
+            found = noun.search(text)
+            if found:
+                subjects.append((found.start(), name))
+        subject = min(subjects)[1] if subjects else None
+
+        if subject == "inventory":
+            # The SPR is the exception that proves the rule. A release adds
+            # barrels to the market and is bearish, but a refill is the
+            # government *buying* them, which is demand and bullish -- and
+            # "replenish strategic reserves" was being read as a stock build.
+            if _SPR.search(text) and increase:
+                kind = DEMAND_UP
+                matched.append("spr_refill")
+            else:
+                kind = SUPPLY_UP if increase else SUPPLY_DOWN
+                matched.append("inventory_build" if increase else "inventory_draw")
+        elif subject == "demand":
+            kind = DEMAND_UP if increase else DEMAND_DOWN
+            matched.append("demand")
+        elif subject == "supply":
+            kind = SUPPLY_DOWN if decrease else SUPPLY_UP
+            matched.append("supply")
+
+    if kind == UNKNOWN and _RISK_DOWN.search(text):
         kind = RISK_DOWN
         matched.append("risk_easing")
-    elif _RISK_UP.search(text):
+    elif kind == UNKNOWN and _RISK_UP.search(text):
         kind = RISK_UP
         matched.append("risk")
 
@@ -283,17 +336,94 @@ def describes_market_directly(title: str) -> bool:
 
     moved = bool(_INCREASE.search(text) or _DECREASE.search(text))
 
+    # A named supply event settles it before anything else is considered.
+    # "Russia's gasoline output fell to about 70% of domestic consumption"
+    # mentions consumption, but `output ... fell` is a supply loss and reading
+    # it as a demand report inverted the sign at confidence 0.98. The supply
+    # guard used to sit below the demand branch and never got the chance.
+    if _SUPPLY_EVENT_NOUN.search(text):
+        return False
+
     # Inventories and demand are the market's own quantities.
     if moved and (_INVENTORY_NOUN.search(text) or _DEMAND_NOUN.search(text)):
         return True
 
-    # A price report needs a price subject, a price marker and a move -- and no
-    # supply event to attribute it to. "OPEC raises production quotas by 5%"
-    # carries a percentage but is a supply decision, and inverting it is right.
-    if _SUPPLY_EVENT_NOUN.search(text):
-        return False
+    # A price report needs a price subject, a price marker and a move.
+    # "OPEC raises production quotas by 5%" carries a percentage but is a
+    # supply decision, and is already excluded by the guard above.
     return bool(
         _PRICE_SUBJECT.search(text)
         and _PRICE_MARKER.search(text)
         and (_PRICE_MOVE.search(text) or moved)
     )
+
+
+#: "down 39 cents, 0.43%", "rises 3.5%", "fell 2.46% year-over-year".
+_PERCENT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+
+#: Marks a headline as quoting a level or a forecast rather than reporting a
+#: change to one: a settlement price, a survey average, an export volume.
+_LEVEL_REPORT = _p(
+    r"settles?", r"settled", r"settlement", r"averages?", r"averaged",
+    r"forecast\w*", r"expected", r"poll", r"survey", r"estimates?", r"reached",
+    r"stands? at", r"at about", r"unchanged", r"steady", r"flat",
+)
+
+#: The unit that makes the quoted figure a market level -- a price or a volume.
+#: Wider than `_PRICE_MARKER`, which knows only about prices: "U.S. oil output
+#: to average 13.83 million bpd in August vs 13.82 million bpd in July" is the
+#: same kind of non-event and quotes barrels rather than dollars.
+_LEVEL_UNIT = _p(
+    r"\$\d[\d.,]*", r"a barrel", r"per barrel", r"/bbl", r"bbls?", r"barrels?",
+    r"bpd", r"b/d", r"a gallon", r"per gallon", r"mmbtu", r"bcf", r"mcf",
+    r"tonnes?", r"cents", r"prices?", r"futures",
+)
+
+#: Verbs that report an actual move, for disqualifying a level report. Narrower
+#: than `_PRICE_MOVE`, which includes `settle` -- and a settlement *is* the
+#: level, so reusing that list would disqualify every print we want to catch.
+_DIRECTIONAL_MOVE = _p(
+    r"rall(?:y|ies|ied)", r"slid\w*", r"slides?", r"slip\w*", r"dip\w*",
+    r"tumbl\w+", r"plunge\w*", r"surg\w+", r"jump\w*", r"climb\w+",
+    r"falls?", r"fell", r"rise[sn]?", r"rose", r"drops?", r"dropped",
+    r"gains?", r"gained", r"lose[sn]?", r"lost", r"retreat\w*", r"advance\w*",
+    r"up", r"down", r"higher", r"lower", r"weaker", r"stronger",
+)
+
+
+def stated_move_fraction(title: str) -> float | None:
+    """The size of the move a headline states, as a fraction, or None.
+
+    Magnitude has to come from the number, not the verb. "Brent settles down
+    39 cents, 0.43%" and "Brent collapses 12%" are the same sentence shape and
+    two entirely different days, but FinBERT reads both as strongly negative
+    and scored the first at -96.4. Returning 0.0043 lets the scorer size the
+    call to the move that actually happened.
+
+    None means the headline states no percentage, which is not the same as
+    stating zero -- the caller decides what to do with an unsized move.
+    """
+    text = (title or "").strip()
+    percents = [float(m) for m in _PERCENT.findall(text)]
+    if not percents:
+        return None
+    # Wire copy quotes the change last ("down 39 cents, 0.43%"); where several
+    # appear, the smallest is the move and the larger ones are levels or shares.
+    return min(percents) / 100.0
+
+
+def is_level_report(title: str) -> bool:
+    """Whether the headline quotes a level or forecast with no change to it.
+
+    "NYMEX Diesel September futures settle at $4.3567 a gallon" carries no
+    direction at all -- it is the print, not the move. Scored as tone it came
+    back bearish at 0.78 confidence, purely because a table of numbers reads
+    as unexciting prose.
+    """
+    text = (title or "").strip()
+    if not text:
+        return False
+    # A stated move disqualifies it: this is about prints with nothing moving.
+    if _PERCENT.search(text) or _DIRECTIONAL_MOVE.search(text):
+        return False
+    return bool(_LEVEL_REPORT.search(text) and _LEVEL_UNIT.search(text))

@@ -24,6 +24,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import httpx
 
@@ -101,6 +102,18 @@ def _bearer_token() -> str | None:
 
 #: Direction -> Adaptive Card colour. Teams accepts only this fixed vocabulary.
 _DIRECTION_COLOUR = {"bullish": "Good", "bearish": "Attention", "neutral": "Default"}
+
+
+def _as_score(stored):
+    """Adapt a stored `HeadlineScore` row to what `build_payload` reads.
+
+    The row keeps `label`/`score`; the card wants `direction`/`value`. Kept as
+    a shim rather than renaming either, because the column names are what the
+    scorer-comparison queries are written against.
+    """
+    if stored is None:
+        return None
+    return SimpleNamespace(direction=stored.label or "neutral", value=stored.score)
 
 
 def build_payload(headline, score=None, index=None) -> dict:
@@ -206,9 +219,10 @@ def send_pending(limit: int | None = None, dry_run: bool = False) -> DeliveryRes
     """
     from sqlalchemy import select
 
+    from . import scoring
     from .classify import NARRATIVE
     from .db import SessionLocal
-    from .models import Headline, utcnow
+    from .models import Headline, HeadlineScore, utcnow
     from .relevance import IRRELEVANT
 
     if not is_configured() and not dry_run:
@@ -217,20 +231,31 @@ def send_pending(limit: int | None = None, dry_run: bool = False) -> DeliveryRes
     cap = limit or settings.teams_max_per_run
     sent = failed = 0
     with SessionLocal() as session:
-        pending = list(
-            session.scalars(
-                select(Headline)
-                .where(
-                    Headline.notified_at.is_(None),
-                    Headline.kind == NARRATIVE,
-                    Headline.category != IRRELEVANT,
-                )
-                .order_by(Headline.published_at.asc())
-                .limit(cap)
+        # Pull the stored score alongside the headline. This path used to post
+        # the title on its own: `build_payload` defaults `score` to None, and
+        # the poller's inline send was the only caller passing one. Anything
+        # delivered from the backlog -- which is everything, after a restart --
+        # arrived in the chat with no direction on it.
+        #
+        # Outer join, so a headline that somehow has no score for the current
+        # version still gets delivered rather than silently held back.
+        pending = session.execute(
+            select(Headline, HeadlineScore)
+            .outerjoin(
+                HeadlineScore,
+                (HeadlineScore.headline_id == Headline.id)
+                & (HeadlineScore.scorer_version == scoring.version()),
             )
-        )
-        for headline in pending:
-            payload = build_payload(headline)
+            .where(
+                Headline.notified_at.is_(None),
+                Headline.kind == NARRATIVE,
+                Headline.category != IRRELEVANT,
+            )
+            .order_by(Headline.published_at.asc())
+            .limit(cap)
+        ).all()
+        for headline, stored in pending:
+            payload = build_payload(headline, score=_as_score(stored))
             if dry_run:
                 log.info("[dry-run] would post: %s", headline.title)
                 sent += 1

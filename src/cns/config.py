@@ -56,11 +56,13 @@ class Settings(BaseSettings):
     #: Escape hatch: paste a token directly instead of client credentials.
     teams_bearer_token: str = ""
 
+    #: hybrid = direction from salience, negation, supply/demand events and
+    #: stance, in that order, with FinBERT demoted to intensity only.
     #: sentiment = FinBERT net sentiment of the wording (simple, but inherits
     #: the tone-vs-price inversion). event = supply/demand rules set direction.
     #: Scores are stored under separate versions, so switching adds a second
     #: opinion rather than overwriting the first.
-    scorer_mode: str = "sentiment"
+    scorer_mode: str = "hybrid"
 
     #: Flip the sign of sentiment scores. Most oil-relevant news FinBERT reads
     #: as negative (supply cuts, conflict, sanctions, outages) is bullish for

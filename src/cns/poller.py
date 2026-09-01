@@ -108,6 +108,7 @@ def _insert_new(session, items: list[financial_juice.FeedItem]) -> tuple[int, in
                     category=headline.category,
                     score=result.value,
                     confidence=result.confidence,
+                    salience=result.salience,
                     label=result.direction,
                     components=result.components,
                 )

@@ -71,6 +71,7 @@ def main() -> int:
                         category=headline.category,
                         score=result.value,
                         confidence=result.confidence,
+                        salience=result.salience,
                         label=result.direction,
                         components=result.components,
                     )

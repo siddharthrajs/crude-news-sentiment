@@ -202,3 +202,85 @@ def test_webhook_signature_is_redacted():
 def test_redacting_handles_missing_signature():
     assert notify.redact("") == ""
     assert notify.redact("https://x/invoke?api-version=1") == "https://x/invoke?api-version=1"
+
+
+def test_send_pending_puts_the_score_on_the_card(monkeypatch):
+    """The backlog sender used to post the headline with no direction.
+
+    `build_payload` defaults `score` to None, and only the poller's inline send
+    passed one -- so anything delivered from the backlog, which is everything
+    after a restart, arrived in the chat as a bare title.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from cns import db as db_module
+    from cns import notify, scoring
+    from cns.models import Base, Headline, HeadlineScore
+
+    # `send_pending` does `from .db import SessionLocal` at call time, so
+    # patching the attribute on the module redirects it. Without this the test
+    # runs against whatever DATABASE_URL points at, which is the live database.
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    Local = sessionmaker(bind=engine)
+    monkeypatch.setattr(db_module, "SessionLocal", Local)
+
+    posted = []
+    monkeypatch.setattr(notify, "post", lambda payload: posted.append(payload))
+    monkeypatch.setattr(notify.settings, "teams_enabled", True)
+    monkeypatch.setattr(notify.settings, "teams_webhook_url", "https://example.invalid/x")
+
+    with Local() as session:
+        headline = Headline(
+            source="test", external_id="score-on-card",
+            title="Strait of Hormuz closed to all shipping",
+            raw_title="Strait of Hormuz closed to all shipping",
+            kind="narrative", category="geo_risk",
+        )
+        session.add(headline)
+        session.flush()
+        session.add(HeadlineScore(
+            headline_id=headline.id, scorer_version=scoring.version(),
+            category="geo_risk", score=72.0, confidence=0.8, label="bullish",
+        ))
+        session.commit()
+
+    result = notify.send_pending(limit=50)
+    assert result.sent == 1
+    cards = [
+        block["text"]
+        for p in posted
+        for block in p["attachments"][0]["content"]["body"]
+    ]
+    assert any("BULLISH" in t and "+72" in t for t in cards), cards
+
+
+def test_send_pending_still_delivers_an_unscored_headline(monkeypatch):
+    """The outer join must not hold back a headline that has no score row."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from cns import db as db_module
+    from cns import notify
+    from cns.models import Base, Headline
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    Local = sessionmaker(bind=engine)
+    monkeypatch.setattr(db_module, "SessionLocal", Local)
+
+    posted = []
+    monkeypatch.setattr(notify, "post", lambda payload: posted.append(payload))
+    monkeypatch.setattr(notify.settings, "teams_enabled", True)
+    monkeypatch.setattr(notify.settings, "teams_webhook_url", "https://example.invalid/x")
+
+    with Local() as session:
+        session.add(Headline(
+            source="test", external_id="no-score", title="Unscored headline",
+            raw_title="Unscored headline", kind="narrative", category="geo_risk",
+        ))
+        session.commit()
+
+    assert notify.send_pending(limit=50).sent == 1
+    assert len(posted[0]["attachments"][0]["content"]["body"]) == 1

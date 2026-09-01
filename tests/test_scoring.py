@@ -215,6 +215,9 @@ def test_inversion_does_not_touch_event_mode(monkeypatch):
     monkeypatch.setattr(scoring.settings, "scorer_invert", True)
     monkeypatch.setattr(scoring, "_finbert_probs", lambda t: None)
     assert scoring.score(H("OPEC cuts crude output quotas")).direction == "bullish"
+    # Pinned, because `scorer_version` is read from the environment and a
+    # deployed .env setting it to anything but the default failed this.
+    monkeypatch.setattr(scoring.settings, "scorer_version", "v0")
     assert scoring.version() == "v0-event"
 
 
