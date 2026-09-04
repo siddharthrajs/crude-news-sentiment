@@ -281,3 +281,48 @@ def test_capacity_returning_is_supply_up(title, kind):
 def test_returning_needs_a_supply_noun():
     """`returns` is a common word; without a supply noun it must not fire."""
     assert events.classify("Iran returns to negotiations with the US").kind == events.UNKNOWN
+
+
+def test_tone_fallback_magnitude_ignores_how_charged_the_wording_is(hybrid, monkeypatch):
+    """Two headlines with nothing structural to go on, worded very differently.
+
+    Magnitude used to track |net|, so FinBERT being certain about the *tone*
+    produced a big call about *crude*. Measured, |net| predicts neither
+    directional accuracy nor whether the headline concerns oil at all (the
+    table in `scoring._TONE_MAGNITUDE`), so the size is now flat and only the
+    sign comes from the tone.
+    """
+    charged = {"positive": 0.95, "negative": 0.02, "neutral": 0.03}
+    flat = {"positive": 0.40, "negative": 0.34, "neutral": 0.26}
+    title = "China vice premier: prospects for China-Russia development ties are promising"
+
+    monkeypatch.setattr(scoring, "_finbert_probs", lambda t: charged)
+    loud = hybrid(title)
+    monkeypatch.setattr(scoring, "_finbert_probs", lambda t: flat)
+    quiet = hybrid(title)
+
+    assert loud.event == quiet.event == "tone_inverted"
+    assert abs(loud.value) == abs(quiet.value)
+    # Confidence is still allowed to differ -- that is the axis |net| does
+    # legitimately speak to.
+    assert loud.confidence > quiet.confidence
+
+
+def test_tone_fallback_is_quieter_than_a_structural_call(hybrid):
+    """The precedence in `_resolve_direction` ranks tone last; the weight now
+    says so too. Before this, a confidently-worded irrelevance reaching the
+    fallback outscored a real supply event."""
+    structural = hybrid("Iran's IRGC: Severe punishment awaits the US - IRIB")
+    fallback = hybrid("US Treasury Secretary Bessent: Chevron CEO doing a fantastic job managing Venezuela assets")
+
+    assert fallback.event == "tone_inverted"
+    assert structural.event.startswith("stance:")
+    assert abs(fallback.value) < 0.5 * abs(structural.value)
+
+
+def test_tone_fallback_still_gets_a_side_and_stays_visible(hybrid):
+    """Damped, not silenced. 20 renders as two cells on the Teams card, which
+    reads as a weak call rather than as no call."""
+    result = hybrid("US Treasury Secretary Bessent: Chevron CEO doing a fantastic job managing Venezuela assets")
+    assert result.direction in ("bullish", "bearish")
+    assert abs(result.value) == pytest.approx(scoring._TONE_MAGNITUDE * 100)

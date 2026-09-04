@@ -3,6 +3,12 @@
 Usage:
     python scripts/eval_direction.py            # headline accuracy + error table
     python scripts/eval_direction.py --quiet    # totals only
+    python scripts/eval_direction.py --labels direction_labels_sep
+
+Two label sets exist. `direction_labels` (ids 751-1124) is what the stance
+lexicon was tuned against, so it measures fit. `direction_labels_sep`
+(ids 1426-2443, 01-04 Sep) was labelled afterwards and never tuned against --
+that is the held-out number, and the one to quote.
 
 Two numbers matter and they trade off:
 
@@ -23,14 +29,13 @@ nothing; a wrong call at 0.95 is the whole problem.
 """
 
 import argparse
+import importlib
 import io
 import os
 import sys
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tests"))
-
-from direction_labels import LABELLED  # noqa: E402
 
 from cns import scoring  # noqa: E402
 
@@ -42,9 +47,9 @@ class _H:
         self.title = title
 
 
-def evaluate():
+def evaluate(labelled):
     rows = []
-    for hid, title, truth in LABELLED:
+    for hid, title, truth in labelled:
         result = scoring.score(_H(title))
         if result is None:
             got, value, conf, sal = 0, 0.0, 0.0, 0.0
@@ -111,9 +116,15 @@ def report(rows, quiet=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument(
+        "--labels",
+        default="direction_labels",
+        help="label module in tests/ (direction_labels | direction_labels_sep)",
+    )
     args = parser.parse_args()
-    print("scorer version:", scoring.version())
-    report(evaluate(), quiet=args.quiet)
+    labelled = importlib.import_module(args.labels).LABELLED
+    print("scorer version:", scoring.version(), "| labels:", args.labels)
+    report(evaluate(labelled), quiet=args.quiet)
     return 0
 
 

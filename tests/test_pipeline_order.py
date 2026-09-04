@@ -140,7 +140,9 @@ def test_scorer_is_called_for_relevant_headlines(session, teams, monkeypatch):
     monkeypatch.setattr(poller.scoring, "score", fake_score)
     poller._insert_new(session, [item(1, GEO), item(2, NOISE)])
     assert scored == [GEO]
-    assert "BULLISH  +72" in texts(teams[0])
+    # The exact render is `tests/test_notify`'s business; all this asserts is
+    # that the score reached the card at all.
+    assert any(t.startswith("BULLISH") for t in texts(teams[0]))
 
 
 def test_unscorable_headline_sends_no_score_line(session, teams, monkeypatch):

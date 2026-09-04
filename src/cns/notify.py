@@ -103,6 +103,37 @@ def _bearer_token() -> str | None:
 #: Direction -> Adaptive Card colour. Teams accepts only this fixed vocabulary.
 _DIRECTION_COLOUR = {"bullish": "Good", "bearish": "Attention", "neutral": "Default"}
 
+#: Strength meter geometry. Ten cells, so one cell is ten points of |value|.
+_METER_CELLS = 10
+_METER_STEP = 100 / _METER_CELLS
+_METER_FILLED = "▰"
+_METER_EMPTY = "▱"
+
+
+def _meter(value: float) -> str:
+    """Ten-cell bar for the *magnitude* of a score.
+
+    The card used to print the raw `Score.value`, which is
+    `direction * magnitude * damp * 100`. Its sign therefore only repeated the
+    word beside it, and its digits were how hard the headline hits -- not a
+    position on a bear-to-bull axis. Readers took "+72" for "72% bullish". A bar
+    carries the one thing the number was actually saying and cannot be read as a
+    percentage of anything directional; direction stays in the word and the
+    colour, which is where it was never ambiguous.
+
+    Deliberately not the confidence: that is a separate axis (see
+    `scoring.Score`) and putting two bars on a chat card reads as one scale
+    split in half.
+
+    A non-zero score always fills at least one cell. The hybrid scorer never
+    returns neutral by design, so an empty bar would read as "no reading" --
+    which is what an absent score line already means.
+    """
+    filled = min(int(abs(value) // _METER_STEP), _METER_CELLS)
+    if filled == 0 and value:
+        filled = 1
+    return _METER_FILLED * filled + _METER_EMPTY * (_METER_CELLS - filled)
+
 
 def _as_score(stored):
     """Adapt a stored `HeadlineScore` row to what `build_payload` reads.
@@ -124,8 +155,11 @@ def build_payload(headline, score=None, index=None) -> dict:
     body is accepted by the trigger (202) and then fails the run. So the payload
     is the card itself, and the flow is a dumb pipe.
 
-    Two lines at most: the headline, and the score when there is one. An
-    unscored headline gets no score line at all rather than a rendered zero,
+    Two lines at most: the headline, and the score when there is one. The score
+    line is the direction word plus a `_meter` bar of the magnitude -- never the
+    signed number, which readers took for a bull/bear percentage.
+
+    An unscored headline gets no score line at all rather than an empty bar,
     which would be indistinguishable from a genuinely balanced reading.
     """
     body = [
@@ -141,7 +175,10 @@ def build_payload(headline, score=None, index=None) -> dict:
         body.append(
             {
                 "type": "TextBlock",
-                "text": "%s  %+.0f" % (score.direction.upper(), score.value),
+                "text": "%s  %s  strength" % (
+                    score.direction.upper(),
+                    _meter(score.value),
+                ),
                 "weight": "Bolder",
                 "color": _DIRECTION_COLOUR.get(score.direction, "Default"),
                 "wrap": True,

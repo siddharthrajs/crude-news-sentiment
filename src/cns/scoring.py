@@ -11,15 +11,23 @@ headline is structurally soundest, and uses FinBERT only for intensity. See
 against three days of hand-read live headlines (`tests/direction_labels`):
 
                             sentiment      hybrid
-    directional accuracy    45/70  (64%)   69/70  (99%)
+    directional accuracy    45/70  (64%)   70/70  (100%)
     sign flipped            14              0
     false signals           28/43  (65%)    9/43  (21%)
     weighted index error    43%             8%
 
-    Read the 99% with the caveat that the stance lexicon was tuned against that
-    same set, so it measures fit, not generalisation. The honest number is the
-    older `scripts/eval_inversion.py` case list, written before this scorer
-    existed and never tuned against: 18/18 there, versus 17/18 for sentiment.
+    That 100% is fit, not generalisation: the stance lexicon was tuned against
+    this same set. `tests/direction_labels_sep` is the answer -- 209 headlines
+    from 01-04 Sep, labelled afterwards and never tuned against:
+
+                            hybrid (held out)
+    directional accuracy    103/126  (82%)
+    sign flipped            23
+    weighted index error    32%
+
+    So 82% is the number to quote. The error is not mostly sign flips: those
+    carry ~11% of index weight, while headlines with no crude direction at all
+    carry 22%. Run both with `scripts/eval_direction.py --labels ...`.
 
 **sentiment** -- FinBERT net sentiment, `P(positive) - P(negative)`,
 scaled to +/-100. Judges wording only. Simple, and it reads the language rather
@@ -48,7 +56,7 @@ import logging
 import threading
 from dataclasses import dataclass
 
-from . import events, stance
+from . import events, stance, templates
 from .config import settings
 
 log = logging.getLogger(__name__)
@@ -235,10 +243,51 @@ def _score_event(title: str) -> Score | None:
 #: territorial reports at 0.15 and unattributable non-energy news at 0.16.
 _SALIENCE_FLOOR = 0.30
 
+#: What the two gates leave of a score. Neither silences the call -- the scorer
+#: always takes a side -- they decide how loudly it is allowed to be made.
+_OFF_TOPIC_DAMP = 0.15
+
+#: Level reports get damped harder than off-topic news, which reads backwards
+#: until you look at what they are. An off-topic headline is real news that
+#: happens not to price a barrel, so a weak call on it is a guess that might be
+#: right. A level report -- "NYMEX Diesel October futures settle at $4.6822 a
+#: gallon" -- contains no direction *at all*; there is nothing to be right
+#: about. At the old 0.2 these printed a steady -16 every evening, three of
+#: them a night, which is a systematic bearish drip into the index from
+#: headlines that say nothing.
+_LEVEL_REPORT_DAMP = 0.04
+
 #: A move of this size is a full-scale price reading. Brent moving 3% in a
 #: session is a big day; the -96.4 the tone scorer returned for a 0.43% drift
 #: left no room to say so.
 _FULL_SCALE_MOVE = 0.03
+
+#: Magnitude and confidence multiplier for the tone fallback -- the last resort
+#: in `_resolve_direction`, when nothing structural applies.
+#:
+#: Flat, deliberately. Magnitude used to track |net| (FinBERT's positive minus
+#: negative mass), on the assumption that a more charged headline is a bigger
+#: one for crude. Measured over the 102 headlines that reached this fallback
+#: across both label sets, |net| predicts neither:
+#:
+#:     |net|        n   no crude signal   directional accuracy
+#:     0.0-0.1     35        77%               88%  (n=8)
+#:     0.1-0.3     19        37%               75%  (n=12)
+#:     0.3-0.6     11        64%               50%  (n=4)
+#:     0.6-0.9     27        56%               75%  (n=12)
+#:     0.9-1.0     10        40%               83%  (n=6)
+#:
+#: No trend in either column. Tonal charge is how strongly the sentence is
+#: worded, which is unrelated to whether it prices a barrel -- so scaling by it
+#: only let confidently-worded irrelevance in at full size: "Chevron CEO doing
+#: a fantastic job managing Venezuela assets" scored -86.6, and "Russia to shut
+#: Goethe-Institut branches" +86.7.
+#:
+#: 0.20 is where the weighted-error curve flattens, and it renders as a
+#: distinct two-cell bar on the Teams card, so a fallback guess is visibly
+#: weaker in the chat than a structural call without being invisible.
+_TONE_MAGNITUDE = 0.20
+_TONE_CONFIDENCE = 0.5
 
 
 
@@ -253,8 +302,15 @@ def _resolve_direction(title, probs, net, intensity, base, hedge_factor):
 
     The precedence is the point. Each step is a structurally sounder source of
     direction than the one after it, so the first that applies wins and tone is
-    what is left when nothing else fits.
+    what is left when nothing else fits: a number the feed states (`templates`)
+    beats a rule inferring one, which beats a lexicon, which beats the wording.
     """
+    # First, because a number the feed states beats any rule inferring one.
+    parsed = templates.classify(title)
+    if parsed is not None:
+        return (parsed.direction, f"template:{parsed.kind}", parsed.magnitude,
+                parsed.confidence, parsed.extra)
+
     if stance.negated_disruption(title):
         return -1, "negated_disruption", base * 0.7, 0.5, {}
 
@@ -281,11 +337,12 @@ def _resolve_direction(title, probs, net, intensity, base, hedge_factor):
                 {"net": round(net, 4), "stated_move": moved})
 
     # Nothing structural applies: fall back to the inverted-tone reading, at
-    # reduced confidence because it is the reading we trust least. Magnitude
-    # tracks |net| directly, so a headline FinBERT finds balanced gets a call
-    # with a number near zero rather than no call at all.
-    confidence = (1.0 - probs["neutral"]) * 0.8 if probs else 0.2
-    return (_sign(-net), "tone_inverted", min(abs(net), 1.0) * hedge_factor,
+    # reduced confidence because it is the reading we trust least, and at a
+    # flat magnitude because |net| turned out to say nothing about how much the
+    # headline matters -- see `_TONE_MAGNITUDE`. The sign still comes from the
+    # tone, so the call is unchanged; only how loudly it is made.
+    confidence = (1.0 - probs["neutral"]) * _TONE_CONFIDENCE if probs else 0.2
+    return (_sign(-net), "tone_inverted", _TONE_MAGNITUDE * hedge_factor,
             confidence, {"net": round(net, 4), "inverted": True})
 
 
@@ -341,9 +398,9 @@ def _score_hybrid(title: str) -> Score | None:
     # index the way a Hormuz closure does.
     damp, gate = 1.0, None
     if salience < _SALIENCE_FLOOR:
-        damp, gate = 0.15, "off_topic"
+        damp, gate = _OFF_TOPIC_DAMP, "off_topic"
     elif events.is_level_report(title):
-        damp, gate = 0.2, "level_report"
+        damp, gate = _LEVEL_REPORT_DAMP, "level_report"
 
     return Score(
         value=round(direction * magnitude * damp * 100, 1),

@@ -95,11 +95,56 @@ def test_no_button_no_category_no_facts():
     assert "GEOPOLITICS" not in texts(notify.build_payload(FakeHeadline()))
 
 
+FILLED, EMPTY = "▰", "▱"
+
+
+def bar(payload):
+    """The meter cells from the card's score line."""
+    return "".join(c for c in texts(payload)[1] if c in (FILLED, EMPTY))
+
+
 def test_scored_card_adds_one_score_line():
     payload = notify.build_payload(
         FakeHeadline(), score=Score(72.0, "bullish", 0.8, "supply_down")
     )
-    assert texts(payload) == [FakeHeadline.title, "BULLISH  +72"]
+    assert texts(payload) == [
+        FakeHeadline.title,
+        "BULLISH  " + FILLED * 7 + EMPTY * 3 + "  strength",
+    ]
+
+
+def test_score_line_carries_no_signed_number():
+    """The regression this render exists to fix.
+
+    "+72" was read in the chat as "72% bullish". It was never that: the value is
+    direction x magnitude, so the sign only repeated the word next to it and the
+    digits were magnitude alone.
+    """
+    for value in (72.0, -60.0, 4.0, 100.0):
+        direction = "bullish" if value > 0 else "bearish"
+        line = texts(notify.build_payload(FakeHeadline(), score=Score(value, direction, 0.8)))[1]
+        assert not any(ch.isdigit() for ch in line)
+        assert "+" not in line and "-" not in line
+
+
+def test_meter_is_always_ten_cells():
+    for value in (0.0, 0.4, 12.0, 55.5, 99.9, 100.0, -100.0):
+        direction = "bearish" if value < 0 else "bullish"
+        assert len(bar(notify.build_payload(FakeHeadline(), score=Score(value, direction, 0.5)))) == 10
+
+
+def test_opposite_directions_of_equal_size_get_the_same_bar():
+    """Magnitude is the only thing the bar encodes; direction is the word."""
+    bull = notify.build_payload(FakeHeadline(), score=Score(60.0, "bullish", 0.8))
+    bear = notify.build_payload(FakeHeadline(), score=Score(-60.0, "bearish", 0.8))
+    assert bar(bull) == bar(bear) == FILLED * 6 + EMPTY * 4
+
+
+def test_a_marginal_call_still_fills_one_cell():
+    """The scorer never returns neutral, so an empty bar would read as no call --
+    which is what an absent score line already means."""
+    payload = notify.build_payload(FakeHeadline(), score=Score(3.0, "bullish", 0.1))
+    assert bar(payload) == FILLED + EMPTY * 9
 
 
 def test_bullish_and_bearish_are_coloured_differently():
@@ -107,7 +152,7 @@ def test_bullish_and_bearish_are_coloured_differently():
     bear = notify.build_payload(FakeHeadline(), score=Score(-60.0, "bearish", 0.7))
     assert card_of(bull)["body"][1]["color"] == "Good"
     assert card_of(bear)["body"][1]["color"] == "Attention"
-    assert card_of(bear)["body"][1]["text"] == "BEARISH  -60"
+    assert card_of(bear)["body"][1]["text"] == "BEARISH  " + FILLED * 6 + EMPTY * 4 + "  strength"
 
 
 def test_no_score_line_when_unscored():
@@ -253,7 +298,7 @@ def test_send_pending_puts_the_score_on_the_card(monkeypatch):
         for p in posted
         for block in p["attachments"][0]["content"]["body"]
     ]
-    assert any("BULLISH" in t and "+72" in t for t in cards), cards
+    assert any("BULLISH" in t and FILLED * 7 in t for t in cards), cards
 
 
 def test_send_pending_still_delivers_an_unscored_headline(monkeypatch):

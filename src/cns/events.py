@@ -367,6 +367,13 @@ _LEVEL_REPORT = _p(
     r"settles?", r"settled", r"settlement", r"averages?", r"averaged",
     r"forecast\w*", r"expected", r"poll", r"survey", r"estimates?", r"reached",
     r"stands? at", r"at about", r"unchanged", r"steady", r"flat",
+    # An official selling price is a level by definition: the number is where
+    # the producer set the price, not a move in it. All three of the Saudi OSPs
+    # in the corpus were being caught here only by accident -- two matched on
+    # incidental words in their *comparison* clause ("vs Oman/Dubai average",
+    # "vs ICE Brent settlement") and the third, priced "vs ASCI", matched
+    # nothing and was scored as prose at -34.3.
+    r"OSPs?", r"official selling price",
 )
 
 #: The unit that makes the quoted figure a market level -- a price or a volume.

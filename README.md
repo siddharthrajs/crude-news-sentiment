@@ -357,7 +357,7 @@ headline scored:
       "type": "AdaptiveCard", "version": "1.4",
       "body": [
         {"type": "TextBlock", "text": "Trump: A lot of oil is pouring out of Hormuz", "wrap": true},
-        {"type": "TextBlock", "text": "BULLISH  +36", "color": "Good", "weight": "Bolder"}
+        {"type": "TextBlock", "text": "BULLISH  ▰▰▰▰▱▱▱▱▱▱  strength", "color": "Good", "weight": "Bolder"}
       ]
     }
   }]
@@ -368,8 +368,21 @@ Both blocks set `wrap` — headlines run long and are truncated without it. The
 card carries no sender line: the chat already shows who posted it.
 
 The score line is green for bullish, red for bearish. An unscored headline gets
-**no score line at all** rather than a rendered `+0`, which would be
+**no score line at all** rather than an empty bar, which would be
 indistinguishable from a genuinely balanced reading.
+
+**The bar is magnitude, not direction.** This line used to print the raw score,
+`BULLISH  +36`, and readers in the chat took that for "36% bullish". It never
+was: `Score.value` is `direction x magnitude x damp x 100`, so the sign only
+repeated the word beside it and the digits were how hard the headline hits.
+Printing ten cells, one per ten points of `|value|`, keeps the one thing the
+number was saying and removes the reading it was not. A non-zero score always
+fills at least one cell, since the hybrid scorer never returns neutral and an
+empty bar would look like no call.
+
+Confidence is deliberately still off the card. It is a second, independent axis
+(see [Scoring](#scoring)), and two bars on a chat card read as one scale split
+in half.
 
 ## The market index
 
